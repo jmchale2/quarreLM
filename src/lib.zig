@@ -92,6 +92,7 @@ export fn quarrel_ols_fit_simd(
     out_coeffs: [*]f64,
     n_features: c_int,
 ) callconv(.c) c_int {
+
     // Call the internal implementation, catching errors
     olsFitVecInternal(
         stream_ptr,
@@ -158,6 +159,99 @@ fn olsFitVecInternal(
     try regression.olsFitVec(columns, y, out_coeffs[0..p]);
 }
 
+export fn quarrel_enet_fit(
+    stream_ptr: *arrow.ArrowArrayStream,
+    y_array_ptr: *arrow.ArrowArray,
+    y_schema_ptr: *arrow.ArrowSchema,
+    out_coeffs: [*]f64,
+    n_features: c_int,
+    lambda: f64,
+    alpha: f64,
+    tol: f64,
+    max_iter: c_int,
+) callconv(.c) c_int {
+    const max_iter_usize: usize = @intCast(max_iter);
+
+    // Call the internal implementation, catching errors
+    const n_iter = elasticNetFitInternal(
+        stream_ptr,
+        y_array_ptr,
+        y_schema_ptr,
+        out_coeffs,
+        n_features,
+        lambda,
+        alpha,
+        tol,
+        max_iter_usize,
+    ) catch |err| {
+        return switch (err) {
+            arrow.ArrowError.WrongFormat => -1,
+            arrow.ArrowError.HasNulls => -2,
+            arrow.ArrowError.NullBuffer => -3,
+            arrow.ArrowError.StreamError => -4,
+            arrow.ArrowError.SchemaError => -5,
+            else => -99,
+        };
+    };
+    return @intCast(n_iter);
+}
+
+fn elasticNetFitInternal(
+    stream_ptr: *arrow.ArrowArrayStream,
+    y_array_ptr: *arrow.ArrowArray,
+    y_schema_ptr: *arrow.ArrowSchema,
+    out_coeffs: [*]f64,
+    n_features: c_int,
+    lambda: f64,
+    alpha: f64,
+    tol: f64,
+    max_iter: usize,
+) !usize {
+    const p: usize = @intCast(n_features);
+
+    // Extract y
+    const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
+
+    // Get schema from stream to validate
+    var schema: arrow.ArrowSchema = undefined;
+    const schema_rc = stream_ptr.get_schema.?(stream_ptr, &schema);
+    if (schema_rc != 0) return arrow.ArrowError.SchemaError;
+    defer {
+        if (schema.release) |release_fn| release_fn(&schema);
+    }
+
+    // Read the batch from the stream
+    var batch: arrow.ArrowArray = undefined;
+    const batch_rc = stream_ptr.get_next.?(stream_ptr, &batch);
+    if (batch_rc != 0) return arrow.ArrowError.StreamError;
+    defer {
+        if (batch.release) |release_fn| release_fn(&batch);
+    }
+
+    // batch.children contains one ArrowArray per column
+    // schema.children contains one ArrowSchema per column
+    const allocator = std.heap.page_allocator;
+    const columns = try allocator.alloc([]const f64, p);
+    defer allocator.free(columns);
+
+    for (0..p) |i| {
+        const child_array: *arrow.ArrowArray = @ptrCast(batch.children[i]);
+        const child_schema: *arrow.ArrowSchema = @ptrCast(schema.children[i]);
+        columns[i] = try arrow.asFloat64Slice(child_array, child_schema);
+    }
+
+    // Call the solver
+    // columns: []const []const f64,
+    // y: []const f64,
+    // lambda: f64,
+    // alpha: f64,
+    // out_coefs: []f64,
+    // max_iter: usize,
+    // tol: f64,
+    const n_iter = try regression.elasticNetFit(columns, y, lambda, alpha, out_coeffs[0..p], max_iter, tol);
+
+    return n_iter;
+}
 /// Simple health check — returns 42. Use to verify the library loads.
 export fn quarrel_ping() callconv(.c) c_int {
     return 42;

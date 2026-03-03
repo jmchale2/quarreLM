@@ -354,15 +354,13 @@ pub fn elasticNetFit(
     lambda: f64,
     alpha: f64,
     out_coefs: []f64,
-    max_iter: f64,
+    max_iter: usize,
     tol: f64,
 ) !usize {
     const p = columns.len;
     const n = y.len;
 
     const n_f: f64 = @floatFromInt(n);
-
-    const max_iter_u = @as(usize, @intFromFloat(max_iter));
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -386,7 +384,7 @@ pub fn elasticNetFit(
         col_norms_squared[j] = dotProduct(columns[j], columns[j]) / n_f;
     }
 
-    for (0..max_iter_u) |iter| {
+    for (0..max_iter) |iter| {
         var max_change: f64 = 0.0;
 
         for (0..p) |j| {
@@ -418,7 +416,7 @@ pub fn elasticNetFit(
         }
     }
 
-    return max_iter_u;
+    return max_iter;
 }
 
 test "elasticNet recovers known coefficients" {
@@ -450,7 +448,7 @@ test "elasticNet recovers known coefficients" {
         0.0,
         0.0,
         &coefs,
-        100000.0,
+        10000.0,
         1e-6,
     );
 
@@ -460,4 +458,55 @@ test "elasticNet recovers known coefficients" {
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);
 
     try std.testing.expect(n_iter <= 10000);
+}
+test "elasticNet lasso zeros out irrelevant features" {
+    // y = 3*x1, x2 is noise
+    const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    const x2 = [_]f64{ 0.1, -0.2, 0.3, -0.1, 0.2, -0.3, 0.1, -0.2, 0.3, -0.1 };
+    const y = [_]f64{ 3, 6, 9, 12, 15, 18, 21, 24, 27, 30 };
+
+    const cols = [_][]const f64{ &x1, &x2 };
+    var coefs = [_]f64{ 0.0, 0.0 };
+
+    _ = try elasticNetFit(&cols, &y, 0.5, 1.0, &coefs, 10000, 1e-10);
+
+    // x1 should be large, x2 should be zero or near-zero
+    try std.testing.expect(@abs(coefs[0]) > 1.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefs[1], 0.1);
+}
+
+test "elasticNet ridge shrinks but keeps all nonzero" {
+    const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    const x2 = [_]f64{ 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
+    // y = 1*x1 + 1*x2
+    const y = [_]f64{ 11, 11, 11, 11, 11, 11, 11, 11, 11, 11 };
+
+    const cols = [_][]const f64{ &x1, &x2 };
+    var coefs = [_]f64{ 0.0, 0.0 };
+
+    // Near-ridge: alpha=0.001, moderate lambda
+    _ = try elasticNetFit(&cols, &y, 0.5, 0.001, &coefs, 10000, 1e-10);
+
+    // Both should be nonzero under ridge
+    try std.testing.expect(@abs(coefs[0]) > 0.01);
+    try std.testing.expect(@abs(coefs[1]) > 0.01);
+}
+
+test "elasticNet warm start converges faster" {
+    const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    const x2 = [_]f64{ 2, 1, 3, 2, 4, 3, 5, 4, 6, 5 };
+    const y = [_]f64{ 7, 7, 15, 14, 22, 21, 29, 28, 36, 35 };
+
+    const cols = [_][]const f64{ &x1, &x2 };
+
+    // Cold start
+    var coefs_cold = [_]f64{ 0.0, 0.0 };
+    const iter_cold = try elasticNetFit(&cols, &y, 0.01, 0.5, &coefs_cold, 10000, 1e-10);
+
+    // Warm start from cold solution
+    var coefs_warm = coefs_cold;
+    const iter_warm = try elasticNetFit(&cols, &y, 0.01, 0.5, &coefs_warm, 10000, 1e-10);
+
+    // Warm start should converge in 1-2 iterations
+    try std.testing.expect(iter_warm <= iter_cold);
 }

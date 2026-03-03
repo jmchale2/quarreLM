@@ -1,0 +1,152 @@
+
+================================================================================
+  LASSO BENCHMARKS (alpha=1.0)
+================================================================================
+
+================================================================================
+  n=100  p=5  λ=0.05  lasso  (matrix: 0.0 MB)
+================================================================================
+  True nonzero coefficients: 3/5
+
+  End-to-end (data in → coefficients out):
+  sklearn Lasso (numpy)                     median=   0.095ms  best=   0.088ms  worst=   0.131ms
+  quarreLM enet (polars)                    median=   0.135ms  best=   0.110ms  worst=   0.256ms
+
+  Zig solver only (arrow export + solve):
+  Zig enet (arrow export + solve)           median=   0.021ms  best=   0.020ms  worst=   0.026ms
+
+  Speedups vs sklearn:
+    quarreLM enet e2e:    0.70x
+    Zig enet solver only: 4.55x
+  Correctness: max |zig - sklearn| = 3.53e-07
+  Sparsity: 3/5 nonzero (8 iterations)
+
+================================================================================
+  n=10,000  p=50  λ=0.05  lasso  (matrix: 4.0 MB)
+================================================================================
+  True nonzero coefficients: 25/50
+
+  End-to-end (data in → coefficients out):
+  sklearn Lasso (numpy)                     median=   1.395ms  best=   1.378ms  worst=  10.313ms
+  quarreLM enet (polars)                    median=   1.036ms  best=   1.023ms  worst=   1.178ms
+
+  Zig solver only (arrow export + solve):
+  Zig enet (arrow export + solve)           median=   0.911ms  best=   0.905ms  worst=   1.455ms
+
+  Speedups vs sklearn:
+    quarreLM enet e2e:    1.35x
+    Zig enet solver only: 1.53x
+  Correctness: max |zig - sklearn| = 1.57e-08
+  Sparsity: 24/50 nonzero (5 iterations)
+
+================================================================================
+  n=100,000  p=100  λ=0.05  lasso  (matrix: 80.0 MB)
+================================================================================
+  True nonzero coefficients: 50/100
+
+  End-to-end (data in → coefficients out):
+  sklearn Lasso (numpy)                     median=  20.749ms  best=  20.605ms  worst=  21.672ms
+  quarreLM enet (polars)                    median=  11.651ms  best=  11.437ms  worst=  13.060ms
+
+  Zig solver only (arrow export + solve):
+  Zig enet (arrow export + solve)           median=  20.812ms  best=  20.579ms  worst=  21.005ms
+
+  Speedups vs sklearn:
+    quarreLM enet e2e:    1.78x
+    Zig enet solver only: 1.00x
+  Correctness: max |zig - sklearn| = 4.34e-08
+  Sparsity: 48/100 nonzero (4 iterations)
+
+================================================================================
+  n=1,000  p=500  λ=0.1  lasso  (matrix: 4.0 MB)
+================================================================================
+  True nonzero coefficients: 250/500
+
+  End-to-end (data in → coefficients out):
+  sklearn Lasso (numpy)                     median=   2.367ms  best=   2.352ms  worst=   3.577ms
+  quarreLM enet (polars)                    median=   6.112ms  best=   6.074ms  worst=   6.948ms
+
+  Zig solver only (arrow export + solve):
+  Zig enet (arrow export + solve)           median=   3.054ms  best=   3.032ms  worst=   3.104ms
+
+  Speedups vs sklearn:
+    quarreLM enet e2e:    0.39x
+    Zig enet solver only: 0.77x
+  Correctness: max |zig - sklearn| = 1.06e-05
+  Sparsity: 241/500 nonzero (18 iterations)
+
+================================================================================
+  ELASTIC NET BENCHMARKS (alpha=0.5)
+================================================================================
+
+================================================================================
+  n=100  p=5  λ=0.05  enet(α=0.5)  (matrix: 0.0 MB)
+================================================================================
+  True nonzero coefficients: 3/5
+
+  End-to-end (data in → coefficients out):
+  sklearn ElasticNet (numpy)                median=   0.093ms  best=   0.091ms  worst=   0.113ms
+  quarreLM enet (polars)                    median=   0.109ms  best=   0.104ms  worst=   0.121ms
+
+  Zig solver only (arrow export + solve):
+  Zig enet (arrow export + solve)           median=   0.022ms  best=   0.021ms  worst=   0.024ms
+
+  Speedups vs sklearn:
+    quarreLM enet e2e:    0.85x
+    Zig enet solver only: 4.25x
+  Correctness: max |zig - sklearn| = 4.51e-07
+  Sparsity: 3/5 nonzero (8 iterations)
+
+================================================================================
+  n=10,000  p=50  λ=0.05  enet(α=0.5)  (matrix: 4.0 MB)
+================================================================================
+  True nonzero coefficients: 25/50
+
+  End-to-end (data in → coefficients out):
+  sklearn ElasticNet (numpy)                median=   1.406ms  best=   1.394ms  worst=   2.703ms
+  quarreLM enet (polars)                    median=   1.044ms  best=   1.034ms  worst=   1.063ms
+
+  Zig solver only (arrow export + solve):
+  Zig enet (arrow export + solve)           median=   0.925ms  best=   0.921ms  worst=   1.536ms
+
+  Speedups vs sklearn:
+    quarreLM enet e2e:    1.35x
+    Zig enet solver only: 1.52x
+  Correctness: max |zig - sklearn| = 1.36e-08
+  Sparsity: 24/50 nonzero (5 iterations)
+
+================================================================================
+  n=100,000  p=100  λ=0.05  enet(α=0.5)  (matrix: 80.0 MB)
+================================================================================
+  True nonzero coefficients: 50/100
+
+  End-to-end (data in → coefficients out):
+  sklearn ElasticNet (numpy)                median=  20.824ms  best=  20.650ms  worst=  23.854ms
+  quarreLM enet (polars)                    median=  11.781ms  best=  11.599ms  worst=  11.943ms
+
+  Zig solver only (arrow export + solve):
+  Zig enet (arrow export + solve)           median=  20.362ms  best=  20.270ms  worst=  20.994ms
+
+  Speedups vs sklearn:
+    quarreLM enet e2e:    1.77x
+    Zig enet solver only: 1.02x
+  Correctness: max |zig - sklearn| = 4.09e-08
+  Sparsity: 48/100 nonzero (4 iterations)
+
+================================================================================
+  n=1,000  p=500  λ=0.1  enet(α=0.5)  (matrix: 4.0 MB)
+================================================================================
+  True nonzero coefficients: 250/500
+
+  End-to-end (data in → coefficients out):
+  sklearn ElasticNet (numpy)                median=   2.687ms  best=   2.666ms  worst=  10.144ms
+  quarreLM enet (polars)                    median=   6.640ms  best=   6.597ms  worst=   6.682ms
+
+  Zig solver only (arrow export + solve):
+  Zig enet (arrow export + solve)           median=   3.613ms  best=   3.602ms  worst=   3.659ms
+
+  Speedups vs sklearn:
+    quarreLM enet e2e:    0.40x
+    Zig enet solver only: 0.74x
+  Correctness: max |zig - sklearn| = 9.56e-06
+  Sparsity: 329/500 nonzero (21 iterations)
