@@ -1,0 +1,77 @@
+python benchmarks/bench_ols.py
+
+======================================================================
+  n=100  p=5  (matrix: 0.0 MB)
+======================================================================
+
+  End-to-end (data in → coefficients out):
+  sklearn (numpy)                 median=   0.098ms  best=   0.092ms  worst=   0.131ms
+  statsmodels (numpy)             median=   0.062ms  best=   0.059ms  worst=   0.077ms
+  quarreLM scalar (polars)        median=   0.117ms  best=   0.101ms  worst=   0.168ms
+  quarreLM SIMD (polars)          median=   0.111ms  best=   0.103ms  worst=   0.122ms
+
+  Zig solver only (pre-extracted Arrow pointers):
+  Zig SIMD (arrow export + solve)  median=   0.020ms  best=   0.019ms  worst=   0.023ms
+
+  Speedups vs sklearn:
+    quarreLM scalar e2e:  0.84x
+    quarreLM SIMD e2e:    0.89x
+    Zig SIMD solver only: 4.90x
+  SIMD vs scalar:         1.06x
+
+======================================================================
+  n=10,000  p=50  (matrix: 4.0 MB)
+======================================================================
+
+  End-to-end (data in → coefficients out):
+  sklearn (numpy)                 median=   4.182ms  best=   4.140ms  worst=   5.075ms
+  statsmodels (numpy)             median=  12.631ms  best=  12.467ms  worst=  18.634ms
+  quarreLM scalar (polars)        median=   5.634ms  best=   5.598ms  worst=   5.661ms
+  quarreLM SIMD (polars)          median=   1.899ms  best=   1.888ms  worst=   1.987ms
+
+  Zig solver only (pre-extracted Arrow pointers):
+  Zig SIMD (arrow export + solve)  median=   1.804ms  best=   1.797ms  worst=   1.825ms
+
+  Speedups vs sklearn:
+    quarreLM scalar e2e:  0.74x
+    quarreLM SIMD e2e:    2.20x
+    Zig SIMD solver only: 2.32x
+  SIMD vs scalar:         2.97x
+
+======================================================================
+  n=100,000  p=100  (matrix: 80.0 MB)
+======================================================================
+
+  End-to-end (data in → coefficients out):
+  sklearn (numpy)                 median=  79.332ms  best=  78.484ms  worst=  89.069ms
+  statsmodels (numpy)             median= 246.731ms  best= 241.565ms  worst= 383.056ms
+  quarreLM scalar (polars)        median= 201.491ms  best= 201.248ms  worst= 202.873ms
+  quarreLM SIMD (polars)          median=  56.136ms  best=  55.669ms  worst=  56.700ms
+
+  Zig solver only (pre-extracted Arrow pointers):
+  Zig SIMD (arrow export + solve)  median=  65.513ms  best=  65.147ms  worst=  74.346ms
+
+  Speedups vs sklearn:
+    quarreLM scalar e2e:  0.39x
+    quarreLM SIMD e2e:    1.41x
+    Zig SIMD solver only: 1.21x
+  SIMD vs scalar:         3.59x
+
+======================================================================
+  n=1,000  p=500  (matrix: 4.0 MB)
+======================================================================
+
+  End-to-end (data in → coefficients out):
+  sklearn (numpy)                 median=  21.684ms  best=  21.588ms  worst=  22.896ms
+  statsmodels (numpy)             median=  65.981ms  best=  65.469ms  worst=  72.333ms
+  quarreLM scalar (polars)        median=  54.087ms  best=  54.057ms  worst=  54.199ms
+  quarreLM SIMD (polars)          median=  19.983ms  best=  19.929ms  worst=  20.135ms
+
+  Zig solver only (pre-extracted Arrow pointers):
+  Zig SIMD (arrow export + solve)  median=  17.014ms  best=  16.955ms  worst=  17.058ms
+
+  Speedups vs sklearn:
+    quarreLM scalar e2e:  0.40x
+    quarreLM SIMD e2e:    1.09x
+    Zig SIMD solver only: 1.27x
+  SIMD vs scalar:         2.71x
