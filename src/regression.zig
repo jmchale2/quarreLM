@@ -347,3 +347,117 @@ fn softThresholdVec(comptime N: usize, z: @Vector(N, f64), gamma: @Vector(N, f64
     const shrunk = abs_z - gamma;
     return @select(f64, shrunk > zero, sign_z * shrunk, zero);
 }
+
+pub fn elasticNetFit(
+    columns: []const []const f64,
+    y: []const f64,
+    lambda: f64,
+    alpha: f64,
+    out_coefs: []f64,
+    max_iter: f64,
+    tol: f64,
+) !usize {
+    const p = columns.len;
+    const n = y.len;
+
+    const n_f: f64 = @floatFromInt(n);
+
+    const max_iter_u = @as(usize, @intFromFloat(max_iter));
+
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    //residual
+    const r = try alloc.alloc(f64, n);
+    @memcpy(r, y);
+    for (0..p) |j| {
+        if (out_coefs[j] != 0.0) {
+            // subtract warm starts.
+            for (0..n) |i| {
+                r[i] -= columns[j][i] * out_coefs[j];
+            }
+        }
+    }
+
+    // column squared norms
+    const col_norms_squared = try alloc.alloc(f64, p);
+    for (0..p) |j| {
+        col_norms_squared[j] = dotProduct(columns[j], columns[j]) / n_f;
+    }
+
+    for (0..max_iter_u) |iter| {
+        var max_change: f64 = 0.0;
+
+        for (0..p) |j| {
+            const beta_old = out_coefs[j];
+
+            // rho_j = (1/N) * X_j^T r + beta_j (partial residuals)
+            const rho_j = dotProduct(columns[j], r) / n_f + col_norms_squared[j] * beta_old;
+
+            // soft threshold
+            const beta_new = softThreshold(rho_j, lambda * alpha) / (col_norms_squared[j] + lambda * (1.0 - alpha));
+
+            const delta = beta_new - beta_old;
+            if (delta != 0.0) {
+                //Update residuals
+                // r -= X_j * delta
+                for (0..n) |i| {
+                    r[i] -= columns[j][i] * delta;
+                }
+
+                const change = col_norms_squared[j] * delta * delta;
+                if (change > max_change) max_change = change;
+            }
+
+            out_coefs[j] = beta_new;
+        }
+
+        if (max_change < tol) {
+            return iter + 1;
+        }
+    }
+
+    return max_iter_u;
+}
+
+test "elasticNet recovers known coefficients" {
+    // y = 2*x1 + 3*x2 + noise(0)
+    // With no noise, should recover exactly [2, 3]
+    const x1 = [_]f64{ 1, 2, 3, 4, 5 };
+    const x2 = [_]f64{ 2, 1, 3, 2, 4 };
+    const y = [_]f64{
+        2 * 1 + 3 * 2, // 8
+        2 * 2 + 3 * 1, // 7
+        2 * 3 + 3 * 3, // 15
+        2 * 4 + 3 * 2, // 14
+        2 * 5 + 3 * 4, // 22
+    };
+
+    const cols = [_][]const f64{ &x1, &x2 };
+    var coefs = [_]f64{ 2.0, 3.0 };
+
+    // columns: []const []const f64,
+    // y: []const f64,
+    // lambda: f64,
+    // alpha: f64,
+    // out_coefs: []f64,
+    // max_iter: f64,
+    // tol: f64,
+    const n_iter = try elasticNetFit(
+        &cols,
+        &y,
+        0.0,
+        0.0,
+        &coefs,
+        100000.0,
+        1e-6,
+    );
+
+    // std.debug.print("{any}\n", .{coefs});
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);
+
+    try std.testing.expect(n_iter <= 10000);
+}
