@@ -83,10 +83,21 @@ def bench_zig_only_enet(X, y_np, alpha, lambda_):
     y_ptr, y_sch, _a, _b = _extract_array_pointers(y_arr)
     out = np.zeros(p, dtype=np.float64)
     out_ptr = out.ctypes.data_as(ctypes.c_void_p)
+
+    pf = np.ones(p, dtype=np.float64)
+    lb = np.full(p, -np.inf, dtype=np.float64)
+    ub = np.full(p, np.inf, dtype=np.float64)
+    pf_ptr = pf.ctypes.data_as(ctypes.c_void_p)
+    lb_ptr = lb.ctypes.data_as(ctypes.c_void_p)
+    ub_ptr = ub.ctypes.data_as(ctypes.c_void_p)
+
     _lib.quarrel_enet_fit(
         stream_ptr,
         y_ptr,
         y_sch,
+        pf_ptr,
+        lb_ptr,
+        ub_ptr,
         out_ptr,
         ctypes.c_int(p),
         ctypes.c_double(lambda_),
@@ -190,4 +201,5 @@ if __name__ == "__main__":
     run_suite(n=100, p=5, alpha=0.5, lambda_=0.05)
     run_suite(n=10_000, p=50, alpha=0.5, lambda_=0.05)
     run_suite(n=100_000, p=100, alpha=0.5, lambda_=0.05)
+    run_suite(n=100_000, p=500, alpha=0.5, lambda_=0.05)
     run_suite(n=1_000, p=500, alpha=0.5, lambda_=0.1)
