@@ -142,7 +142,7 @@ fn axpy(dst: []f64, src: []const f64, scalar: f64) void {
     }
 }
 
-fn dotProduct(a: []const f64, b: []const f64) f64 {
+pub fn dotProduct(a: []const f64, b: []const f64) f64 {
     const vec_len = 4; // AVX2: 4 × f64 = 256 bits
     const n = a.len;
 

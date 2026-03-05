@@ -1,6 +1,7 @@
 const std = @import("std");
 const arrow = @import("arrow.zig");
 const regression = @import("regression.zig");
+const blas = @import("blas.zig");
 
 const build_options = @import("build_options");
 
