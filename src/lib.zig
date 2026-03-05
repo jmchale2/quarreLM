@@ -2,6 +2,8 @@ const std = @import("std");
 const arrow = @import("arrow.zig");
 const regression = @import("regression.zig");
 
+const build_options = @import("build_options");
+
 // C ABI Exports - consumed from the python side of the fence
 
 export fn quarrel_array_len(arr_ptr: *arrow.ArrowArray, arr_schema_ptr: *arrow.ArrowSchema) callconv(.c) c_int {
@@ -396,5 +398,5 @@ export fn quarrel_ping() callconv(.c) c_int {
 
 /// Returns the library version as a static string.
 export fn quarrel_version() callconv(.c) [*:0]const u8 {
-    return "0.1.0";
+    return build_options.version ++ "\x00";
 }

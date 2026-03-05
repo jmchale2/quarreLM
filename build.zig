@@ -4,6 +4,15 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const git_response = b.run(
+        &[_][]const u8{ "git", "describe", "--tags", "--always", "--dirty" },
+    );
+    const version_raw = std.mem.trim(u8, git_response, " \n\r");
+    const version = b.allocator.dupe(u8, version_raw) catch unreachable;
+
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", version);
+
     const lib = b.addLibrary(.{
         .name = "quarreLM",
         .linkage = .dynamic,
@@ -14,6 +23,8 @@ pub fn build(b: *std.Build) void {
             .link_libc = true,
         }),
     });
+
+    lib.root_module.addOptions("build_options", options);
 
     b.installArtifact(lib);
 

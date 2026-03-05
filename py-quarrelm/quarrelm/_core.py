@@ -42,6 +42,10 @@ def _find_lib() -> ctypes.CDLL:
 _lib = _find_lib()
 
 
+_lib.quarrel_version.restype = ctypes.c_char_p
+_lib.quarrel_version.argtypes = []
+
+
 def get_version():
     return _lib.quarrel_version()
 
