@@ -839,7 +839,7 @@ pub fn elasticNetPath(
     const n_f: f64 = @floatFromInt(n);
 
     var lambda_max: f64 = 0.0;
-    const alpha_safe = clamp(alpha, 1e-3, alpha);
+    const alpha_safe = @max(alpha, 1e-3);
 
     for (0..p) |j| {
         if (penalty_factors[j] == 0.0) continue;
@@ -1045,7 +1045,7 @@ test "elasticNetPath warm starts reduce total iterations" {
     );
 
     const avg_iters = @as(f64, @floatFromInt(path_iters)) / @as(f64, @floatFromInt(n_lambda));
-    std.debug.print("\n  Path avg iterations per lambda: {d:.2}\n", .{avg_iters});
+    // std.debug.print("\n  Path avg iterations per lambda: {d:.2}\n", .{avg_iters});
     try std.testing.expect(avg_iters < 20.0);
 
     // Coefficients should grow as lambda decreases
