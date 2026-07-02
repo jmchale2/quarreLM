@@ -43,6 +43,8 @@ pub fn build(b: *std.Build) void {
 
     blas_module.linkSystemLibrary("openblas", .{ .use_pkg_config = .yes });
 
+    const lib_tests = b.addTest(.{ .root_module = lib_module });
+
     const blas_tests = b.addTest(.{ .root_module = blas_module });
 
     const regression_tests = b.addTest(.{ .root_module = b.createModule(.{
@@ -51,12 +53,15 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     }) });
 
+    const run_lib_tests = b.addRunArtifact(lib_tests);
+
     const run_arrow_tests = b.addRunArtifact(arrow_tests);
     const run_regression_tests = b.addRunArtifact(regression_tests);
     const run_blas_tests = b.addRunArtifact(blas_tests);
     run_blas_tests.has_side_effects = true;
 
     const test_step = b.step("test", "Run tests");
+    test_step.dependOn(&run_lib_tests.step);
     test_step.dependOn(&run_arrow_tests.step);
     test_step.dependOn(&run_blas_tests.step);
     test_step.dependOn(&run_regression_tests.step);

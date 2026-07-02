@@ -10,3 +10,7 @@ pub const build_options = @import("build_options");
 comptime {
     _ = @import("capi.zig");
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}
