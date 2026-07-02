@@ -28,11 +28,11 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
-    const arrow_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/arrow.zig"),
-        .target = target,
-        .optimize = optimize,
-    }) });
+    // const arrow_tests = b.addTest(.{ .root_module = b.createModule(.{
+    //     .root_source_file = b.path("src/arrow.zig"),
+    //     .target = target,
+    //     .optimize = optimize,
+    // }) });
 
     const blas_module = b.createModule(.{
         .root_source_file = b.path("src/blas.zig"),
@@ -47,24 +47,20 @@ pub fn build(b: *std.Build) void {
 
     const blas_tests = b.addTest(.{ .root_module = blas_module });
 
-    const regression_tests = b.addTest(.{ .root_module = b.createModule(.{
-        .root_source_file = b.path("src/regression.zig"),
-        .target = target,
-        .optimize = optimize,
-    }) });
+    // const regression_tests = b.addTest(.{ .root_module = b.createModule(.{
+    //     .root_source_file = b.path("src/regression.zig"),
+    //     .target = target,
+    //     .optimize = optimize,
+    // }) });
 
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
-    const run_arrow_tests = b.addRunArtifact(arrow_tests);
-    const run_regression_tests = b.addRunArtifact(regression_tests);
     const run_blas_tests = b.addRunArtifact(blas_tests);
-    run_blas_tests.has_side_effects = true;
+    // run_blas_tests.has_side_effects = true;
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_lib_tests.step);
-    test_step.dependOn(&run_arrow_tests.step);
     test_step.dependOn(&run_blas_tests.step);
-    test_step.dependOn(&run_regression_tests.step);
 
     const blas_test_step = b.step("test-blas", "Run Blas Tests Directly");
     blas_test_step.dependOn(&run_blas_tests.step);

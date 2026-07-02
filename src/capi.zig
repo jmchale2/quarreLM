@@ -5,6 +5,52 @@ const bridge = @import("bridge.zig");
 const build_options = @import("build_options");
 // C ABI Exports - consumed from the python side of the fence
 
+var last_error_buf: [128]u8 = undefined;
+var last_error: [*:0]const u8 = "";
+
+fn setLastError(err: anyerror) void {
+    last_error = std.fmt.bufPrintZ(&last_error_buf, "{s}", .{@errorName(err)}) catch "error";
+}
+
+export fn quarrel_last_error() callconv(.c) [*:0]const u8 {
+    return last_error;
+}
+
+pub const ErrorCode = enum(c_int) {
+    Ok = 0,
+    WrongFormat = -1,
+    HasNulls = -2,
+    NullBuffer = -3,
+    StreamError = -4,
+    SchemaError = -5,
+    DimensionMismatch = -6,
+    SingularMatrix = -7,
+    OutOfMemory = -8,
+    DegenerateData = -9,
+    Unknown = -99,
+};
+
+fn errorToErrorCode(err: bridge.QuarrelError) ErrorCode {
+    return switch (err) {
+        inline else => |e| @field(ErrorCode, @errorName(e)),
+    };
+}
+fn errorCodeFromInt(code: c_int) ?ErrorCode {
+    inline for (@typeInfo(ErrorCode).@"enum".fields) |f| {
+        if (code == f.value) return @enumFromInt(code);
+    }
+    return null;
+}
+
+fn errorToC(err: bridge.QuarrelError) c_int {
+    return @intFromEnum(errorToErrorCode(err));
+}
+
+export fn quarrel_error_name(code: c_int) callconv(.c) [*:0]const u8 {
+    const ec = std.enums.fromInt(ErrorCode, code) orelse return "InvalidErrorCode";
+    return @tagName(ec);
+}
+
 export fn quarrel_array_len(arr_ptr: *arrow.ArrowArray, arr_schema_ptr: *arrow.ArrowSchema) callconv(.c) c_int {
     const arr = arrow.asFloat64Slice(arr_ptr, arr_schema_ptr) catch |err| {
         std.debug.print("Error: {any}\n", .{err});
@@ -28,16 +74,7 @@ export fn quarrel_ols_fit(
         out_coeffs,
         n_features,
     ) catch |err| {
-        return switch (err) {
-            arrow.ArrowError.WrongFormat => -1,
-            arrow.ArrowError.HasNulls => -2,
-            arrow.ArrowError.NullBuffer => -3,
-            arrow.ArrowError.StreamError => -4,
-            arrow.ArrowError.SchemaError => -5,
-            error.DimensionMismatch => -6,
-            error.SingularMatrix => -7,
-            else => -99,
-        };
+        return errorToC(err);
     };
     return 0;
 }
@@ -58,16 +95,7 @@ export fn quarrel_ols_fit_simd(
         out_coeffs,
         n_features,
     ) catch |err| {
-        return switch (err) {
-            arrow.ArrowError.WrongFormat => -1,
-            arrow.ArrowError.HasNulls => -2,
-            arrow.ArrowError.NullBuffer => -3,
-            arrow.ArrowError.StreamError => -4,
-            arrow.ArrowError.SchemaError => -5,
-            error.DimensionMismatch => -6,
-            error.SingularMatrix => -7,
-            else => -99,
-        };
+        return errorToC(err);
     };
     return 0;
 }
@@ -103,14 +131,7 @@ export fn quarrel_enet_fit(
         tol,
         max_iter_usize,
     ) catch |err| {
-        return switch (err) {
-            arrow.ArrowError.WrongFormat => -1,
-            arrow.ArrowError.HasNulls => -2,
-            arrow.ArrowError.NullBuffer => -3,
-            arrow.ArrowError.StreamError => -4,
-            arrow.ArrowError.SchemaError => -5,
-            else => -99,
-        };
+        return errorToC(err);
     };
     return @intCast(n_iter);
 }
@@ -147,14 +168,7 @@ export fn quarrel_enet_path(
         tol,
         @intCast(max_iter),
     ) catch |err| {
-        return switch (err) {
-            arrow.ArrowError.WrongFormat => -1,
-            arrow.ArrowError.HasNulls => -2,
-            arrow.ArrowError.NullBuffer => -3,
-            arrow.ArrowError.StreamError => -4,
-            arrow.ArrowError.SchemaError => -5,
-            else => -99,
-        };
+        return errorToC(err);
     };
     return @intCast(n_iter);
 }

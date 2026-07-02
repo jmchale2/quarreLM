@@ -2,6 +2,13 @@ const arrow = @import("arrow.zig");
 const std = @import("std");
 const regression = @import("regression.zig");
 
+pub const QuarrelError = arrow.ArrowError || error{
+    DimensionMismatch,
+    SingularMatrix,
+    OutOfMemory,
+    DegenerateData,
+};
+
 pub fn olsFit(
     stream_ptr: *arrow.ArrowArrayStream,
     y_array_ptr: *arrow.ArrowArray,
