@@ -3,6 +3,27 @@ const std = @import("std");
 const inf = std.math.inf(f64);
 const clamp = std.math.clamp;
 
+pub const EnetOptions = struct {
+    lambda: f64,
+    alpha: f64,
+    penalty_factors: []const f64,
+    lower_bounds: []const f64,
+    upper_bounds: []const f64,
+    max_iter: usize = 10_000,
+    tol: f64 = 1e-7,
+};
+
+pub const PathOptions = struct {
+    alpha: f64,
+    penalty_factors: []const f64,
+    lower_bounds: []const f64,
+    upper_bounds: []const f64,
+    n_lambda: usize,
+    lambda_min_ratio: f64, // 1e-4 if n>=p, 1e-2 if n<p
+    max_iter: usize = 10_000,
+    tol: f64 = 1e-7,
+};
+
 pub fn olsFit(
     columns: []const []const f64,
     y: []const f64,
@@ -371,14 +392,8 @@ pub fn elasticNetFit(
     alloc: std.mem.Allocator,
     columns: []const []const f64,
     y: []const f64,
-    lambda: f64,
-    alpha: f64,
-    penalty_factors: []const f64,
-    lower_bounds: []const f64,
-    upper_bounds: []const f64,
     out_coefs: []f64,
-    max_iter: usize,
-    tol: f64,
+    params: EnetOptions,
 ) !usize {
     const p = columns.len;
     const n = y.len;
@@ -412,9 +427,9 @@ pub fn elasticNetFit(
     var total_passes: usize = 0;
     var any_new = true;
 
-    while (any_new and total_passes < max_iter) {
+    while (any_new and total_passes < params.max_iter) {
         var max_change: f64 = 0.0;
-        while (total_passes < max_iter) {
+        while (total_passes < params.max_iter) {
             total_passes += 1;
             max_change = 0.0;
 
@@ -427,9 +442,9 @@ pub fn elasticNetFit(
                 const rho_j = dotProduct(columns[j], r) / n_f + col_norms_squared[j] * beta_old;
 
                 // soft threshold
-                const beta_new = softThreshold(rho_j, lambda * alpha * penalty_factors[j]) /
-                    (col_norms_squared[j] + lambda * (1.0 - alpha) * penalty_factors[j]);
-                const beta_clamped = clamp(beta_new, lower_bounds[j], upper_bounds[j]);
+                const beta_new = softThreshold(rho_j, params.lambda * params.alpha * params.penalty_factors[j]) /
+                    (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
+                const beta_clamped = clamp(beta_new, params.lower_bounds[j], params.upper_bounds[j]);
 
                 if (beta_clamped == 0.0) {
                     active[j] = false;
@@ -450,7 +465,7 @@ pub fn elasticNetFit(
                 out_coefs[j] = beta_clamped;
             }
 
-            if (max_change < tol) break;
+            if (max_change < params.tol) break;
         }
 
         // check for new candidates
@@ -463,14 +478,14 @@ pub fn elasticNetFit(
             const rho_j = dotProduct(columns[j], r) / n_f;
 
             // soft threshold
-            const beta_new = softThreshold(rho_j, lambda * alpha * penalty_factors[j]);
-            const beta_clamped = std.math.clamp(beta_new, lower_bounds[j], upper_bounds[j]);
+            const beta_new = softThreshold(rho_j, params.lambda * params.alpha * params.penalty_factors[j]);
+            const beta_clamped = std.math.clamp(beta_new, params.lower_bounds[j], params.upper_bounds[j]);
 
             if (beta_clamped != 0.0) {
                 active[j] = true;
                 any_new = true;
                 // Actually perform the update
-                out_coefs[j] = beta_clamped / (col_norms_squared[j] + lambda * (1.0 - alpha));
+                out_coefs[j] = beta_clamped / (col_norms_squared[j] + params.lambda * (1.0 - params.alpha));
                 const delta = out_coefs[j];
                 if (delta != 0.0) {
                     //Update residuals
@@ -485,7 +500,7 @@ pub fn elasticNetFit(
             }
         }
 
-        if (max_change < tol) break;
+        if (max_change < params.tol) break;
     }
 
     return total_passes;
@@ -509,7 +524,17 @@ test "elasticNet recovers known coefficients" {
     const lb = [_]f64{ -inf, -inf };
     const ub = [_]f64{ inf, inf };
 
-    const n_iter = try elasticNetFit(alloc, &cols, &y, 0.0, 0.0, &pf, &lb, &ub, &coefs, 10000, 1e-10);
+    const params = EnetOptions{
+        .alpha = 0.0,
+        .lambda = 0.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+
+    const n_iter = try elasticNetFit(alloc, &cols, &y, &coefs, params);
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-4);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-4);
@@ -531,7 +556,17 @@ test "elasticNet lasso zeros out irrelevant features" {
     const lb = [_]f64{ -inf, -inf };
     const ub = [_]f64{ inf, inf };
 
-    _ = try elasticNetFit(alloc, &cols, &y, 0.5, 1.0, &pf, &lb, &ub, &coefs, 10000, 1e-10);
+    const params = EnetOptions{
+        .alpha = 0.0,
+        .lambda = 0.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
 
     try std.testing.expect(@abs(coefs[0]) > 1.0);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefs[1], 0.1);
@@ -552,7 +587,17 @@ test "elasticNet ridge shrinks but keeps all nonzero" {
     const lb = [_]f64{ -inf, -inf };
     const ub = [_]f64{ inf, inf };
 
-    _ = try elasticNetFit(alloc, &cols, &y, 0.5, 0.001, &pf, &lb, &ub, &coefs, 10000, 1e-10);
+    const params = EnetOptions{
+        .alpha = 0.0,
+        .lambda = 0.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
 
     try std.testing.expect(@abs(coefs[0]) > 0.01);
     try std.testing.expect(@abs(coefs[1]) > 0.01);
@@ -573,10 +618,21 @@ test "elasticNet warm start converges faster" {
     const ub = [_]f64{ inf, inf };
 
     var coefs_cold = [_]f64{ 0.0, 0.0 };
-    const iter_cold = try elasticNetFit(alloc, &cols, &y, 0.01, 0.5, &pf, &lb, &ub, &coefs_cold, 10000, 1e-10);
+
+    const params = EnetOptions{
+        .alpha = 0.0,
+        .lambda = 0.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+
+    const iter_cold = try elasticNetFit(alloc, &cols, &y, &coefs_cold, params);
 
     var coefs_warm = coefs_cold;
-    const iter_warm = try elasticNetFit(alloc, &cols, &y, 0.01, 0.5, &pf, &lb, &ub, &coefs_warm, 10000, 1e-10);
+    const iter_warm = try elasticNetFit(alloc, &cols, &y, &coefs_warm, params);
 
     try std.testing.expect(iter_warm <= iter_cold);
 }
@@ -603,7 +659,14 @@ test "elasticNet lower bound prevents negative coefficients" {
     const lb = [_]f64{ 0.0, 0.0 };
     const ub = [_]f64{ inf, inf };
 
-    _ = try elasticNetFit(alloc, &cols, &y, 0.0, 0.0, &pf, &lb, &ub, &coefs, 10000, 1e-10);
+    const params = EnetOptions{
+        .alpha = 0.0,
+        .lambda = 0.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+    };
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
 
     try std.testing.expect(coefs[0] >= 0.0);
     try std.testing.expect(coefs[1] >= 0.0);
@@ -628,7 +691,15 @@ test "elasticNet upper bound caps coefficients" {
     const lb = [_]f64{-inf};
     const ub = [_]f64{2.0};
 
-    _ = try elasticNetFit(alloc, &cols, &y, 0.0, 0.0, &pf, &lb, &ub, &coefs, 10000, 1e-10);
+    const params = EnetOptions{
+        .alpha = 0.0,
+        .lambda = 0.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+    };
+
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
 
     // Should be clamped at 2.0
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
@@ -649,14 +720,35 @@ test "elasticNet penalty factor zero forces variable in" {
     const lb = [_]f64{ -inf, -inf };
     const ub = [_]f64{ inf, inf };
 
+    const params = EnetOptions{
+        .alpha = 1.0,
+        .lambda = 1.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+
     // High lambda with equal penalty ->  x2 should be zeroed
     var coefs_penalized = [_]f64{ 0.0, 0.0 };
-    _ = try elasticNetFit(alloc, &cols, &y, 1.0, 1.0, &pf, &lb, &ub, &coefs_penalized, 10000, 1e-10);
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs_penalized, params);
 
     // Now with penalty_factor=0 on x2 -> should be nonzero even at high lambda
     const pf_forced = [_]f64{ 1.0, 0.0 };
     var coefs_forced = [_]f64{ 0.0, 0.0 };
-    _ = try elasticNetFit(alloc, &cols, &y, 1.0, 1.0, &pf_forced, &lb, &ub, &coefs_forced, 10000, 1e-10);
+
+    const params_forced = EnetOptions{
+        .alpha = 1.0,
+        .lambda = 1.0,
+        .penalty_factors = &pf_forced,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs_forced, params_forced);
 
     // x2 was zero with penalty, should be nonzero without
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefs_penalized[1], 0.01);
@@ -680,12 +772,33 @@ test "elasticNet high penalty factor increases shrinkage" {
     // Equal penalty
     const pf_equal = [_]f64{ 1.0, 1.0 };
     var coefs_equal = [_]f64{ 0.0, 0.0 };
-    _ = try elasticNetFit(alloc, &cols, &y, 0.1, 1.0, &pf_equal, &lb, &ub, &coefs_equal, 10000, 1e-10);
+    const params_equal = EnetOptions{
+        .alpha = 1.0,
+        .lambda = 0.1,
+        .penalty_factors = &pf_equal,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs_equal, params_equal);
 
     // Heavy penalty on x2
     const pf_heavy = [_]f64{ 1.0, 5.0 };
     var coefs_heavy = [_]f64{ 0.0, 0.0 };
-    _ = try elasticNetFit(alloc, &cols, &y, 0.1, 1.0, &pf_heavy, &lb, &ub, &coefs_heavy, 10000, 1e-10);
+
+    const params_heavy = EnetOptions{
+        .alpha = 1.0,
+        .lambda = 0.1,
+        .penalty_factors = &pf_heavy,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs_heavy, params_heavy);
 
     // x2 should be more shrunk with higher penalty factor
     try std.testing.expect(@abs(coefs_heavy[1]) < @abs(coefs_equal[1]));
@@ -707,7 +820,17 @@ test "elasticNet box constraints with regularization" {
     const lb = [_]f64{ 0.5, -inf }; // x1 >= 0.5
     const ub = [_]f64{ inf, 0.3 }; // x2 <= 0.3
 
-    _ = try elasticNetFit(alloc, &cols, &y, 0.1, 0.5, &pf, &lb, &ub, &coefs, 10000, 1e-10);
+    const params = EnetOptions{
+        .alpha = 0.1,
+        .lambda = 0.5,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
 
     try std.testing.expect(coefs[0] >= 0.5 - 1e-10);
     try std.testing.expect(coefs[1] <= 0.3 + 1e-10);
@@ -821,39 +944,31 @@ pub fn elasticNetPath(
     alloc: std.mem.Allocator,
     columns: []const []const f64,
     y: []const f64,
-    alpha: f64,
-    penalty_factors: []const f64,
-    lower_bounds: []const f64,
-    upper_bounds: []const f64,
-    //path_params
-    n_lambda: usize,
-    lambda_min_ratio: f64, // 1e-4 if n>=p, 1e-2 if n<p
     //outputs, px n_lamba
     out_coefs_matrix: []f64, // coef j, offset at lambda k = [j*n_lambda + k]
     out_lambdas: []f64,
-    max_iter: usize,
-    tol: f64,
+    params: PathOptions,
 ) !usize {
     const p = columns.len;
     const n = y.len;
     const n_f: f64 = @floatFromInt(n);
 
     var lambda_max: f64 = 0.0;
-    const alpha_safe = @max(alpha, 1e-3);
+    const alpha_safe = @max(params.alpha, 1e-3);
 
     for (0..p) |j| {
-        if (penalty_factors[j] == 0.0) continue;
+        if (params.penalty_factors[j] == 0.0) continue;
 
-        const xty_j = @abs(dotProduct(columns[j], y)) / (n_f * alpha_safe * penalty_factors[j]);
+        const xty_j = @abs(dotProduct(columns[j], y)) / (n_f * alpha_safe * params.penalty_factors[j]);
         if (xty_j > lambda_max) lambda_max = xty_j;
     }
     if (lambda_max < 1e-10) return error.DegenerateData;
 
     const log_lambda_max = @log(lambda_max);
-    const log_lambda_min = @log(lambda_max * lambda_min_ratio);
-    for (0..n_lambda) |k| {
+    const log_lambda_min = @log(lambda_max * params.lambda_min_ratio);
+    for (0..params.n_lambda) |k| {
         const k_f: f64 = @floatFromInt(k);
-        const n_f2: f64 = @floatFromInt(n_lambda - 1);
+        const n_f2: f64 = @floatFromInt(params.n_lambda - 1);
         out_lambdas[k] = @exp(log_lambda_max + k_f * (log_lambda_min - log_lambda_max) / n_f2);
     }
 
@@ -894,7 +1009,7 @@ pub fn elasticNetPath(
     const active = try alloc.alloc(bool, p);
 
     var total_iters: usize = 0;
-    for (0..n_lambda) |k| {
+    for (0..params.n_lambda) |k| {
         // Initialize active from current warm start
         for (0..p) |j| {
             active[j] = coefs[j] != 0.0;
@@ -909,17 +1024,17 @@ pub fn elasticNetPath(
             gram,
             xty,
             out_lambdas[k],
-            alpha,
-            penalty_factors,
-            lower_bounds,
-            upper_bounds,
-            max_iter,
-            tol,
+            alpha_safe,
+            params.penalty_factors,
+            params.lower_bounds,
+            params.upper_bounds,
+            params.max_iter,
+            params.tol,
         );
         total_iters += iters;
 
         for (0..p) |j| {
-            out_coefs_matrix[j * n_lambda + k] = coefs[j];
+            out_coefs_matrix[j * params.n_lambda + k] = coefs[j];
         }
     }
     return total_iters;
@@ -948,33 +1063,25 @@ test "elasticNetPath produces decreasing lambda sequence" {
         y[i] = 2.0 * x1[i] + 3.0 * x2[i] + @sin(t * 1.7) * 0.1;
     }
 
-    const cols = [_][]const f64{
-        &x1,
-        &x2,
-    };
-    const pf = [_]f64{ 1.0, 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf, -inf };
-    const ub = [_]f64{ inf, inf, inf };
+    const cols = [_][]const f64{ &x1, &x2 };
+    const pf = [_]f64{ 1.0, 1.0 };
+    const lb = [_]f64{ -inf, -inf };
+    const ub = [_]f64{ inf, inf };
 
     const n_lambda = 20;
     var out_lambdas: [n_lambda]f64 = undefined;
     var out_coef_matrix: [2 * n_lambda]f64 = undefined;
 
-    _ = try elasticNetPath(
-        alloc,
-        &cols,
-        &y,
-        1.0,
-        &pf,
-        &lb,
-        &ub,
-        n_lambda,
-        1e-4,
-        &out_coef_matrix,
-        &out_lambdas,
-        10000,
-        1e-10,
-    );
+    _ = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, .{
+        .alpha = 1.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .n_lambda = n_lambda,
+        .lambda_min_ratio = 1e-4,
+        .tol = 1e-10,
+        // max_iter: struct default (10_000)
+    });
 
     // Lambda sequence should be strictly decreasing
     for (0..n_lambda - 1) |k| {
@@ -1028,21 +1135,15 @@ test "elasticNetPath warm starts reduce total iterations" {
     var out_lambdas: [n_lambda]f64 = undefined;
     var out_coef_matrix: [p * n_lambda]f64 = undefined;
 
-    const path_iters = try elasticNetPath(
-        alloc,
-        &cols,
-        &y,
-        1.0,
-        &pf,
-        &lb,
-        &ub,
-        n_lambda,
-        1e-4,
-        &out_coef_matrix,
-        &out_lambdas,
-        10000,
-        1e-7,
-    );
+    const path_iters = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, .{
+        .alpha = 1.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .n_lambda = n_lambda,
+        .lambda_min_ratio = 1e-4,
+        // max_iter, tol: struct defaults (10_000, 1e-7) match the old explicit values
+    });
 
     const avg_iters = @as(f64, @floatFromInt(path_iters)) / @as(f64, @floatFromInt(n_lambda));
     // std.debug.print("\n  Path avg iterations per lambda: {d:.2}\n", .{avg_iters});

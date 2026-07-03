@@ -39,6 +39,7 @@ pub fn importStream(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p
         }
         if (schema.release) |release| release(&schema);
     }
+
     while (true) {
         var batch: arrow.ArrowArray = undefined;
         if (stream.get_next.?(stream, &batch) != 0) return arrow.ArrowError.StreamError;
@@ -85,6 +86,13 @@ pub fn importStream(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p
 test "import stream compilation" {
     _ = &importStream;
 }
+
+// When trasitioning to a solver/single fit call, will use tagged unions.
+// pub const FitParams = union(enum) {
+//     ols: void,
+//     enet: regression.EnetOptions,
+//     enet_path: regression.PathOptions,
+// };
 
 pub fn olsFit(
     stream_ptr: *arrow.ArrowArrayStream,
@@ -163,29 +171,24 @@ pub fn elasticNetFit(
     defer table.deinit();
 
     if (y.len != table.n_rows) return error.DimensionMismatch;
-    // Call the solver
-    // columns: []const []const f64,
-    // y: []const f64,
-    // lambda: f64,
-    // alpha: f64,
-    // penalty_factors: []const f64,
-    // lower_bounds: []const f64,
-    // upper_bounds: []const f64,
-    // out_coefs: []f64,
-    // max_iter: usize,
-    // tol: f64,
+
+    // marshall params
+    const params = regression.EnetOptions{
+        .lambda = lambda,
+        .alpha = alpha,
+        .penalty_factors = penalty_factors[0..p],
+        .lower_bounds = lower_bounds[0..p],
+        .upper_bounds = upper_bounds[0..p],
+        .tol = tol,
+        .max_iter = max_iter,
+    };
+
     const n_iter = try regression.elasticNetFit(
         alloc,
         table.columns,
         y,
-        lambda,
-        alpha,
-        penalty_factors[0..p],
-        lower_bounds[0..p],
-        upper_bounds[0..p],
         out_coeffs[0..p],
-        max_iter,
-        tol,
+        params,
     );
 
     return n_iter;
@@ -221,20 +224,24 @@ pub fn elasticNetPath(
 
     if (y.len != table.n_rows) return error.DimensionMismatch;
 
+    const params = regression.PathOptions{
+        .alpha = alpha,
+        .penalty_factors = penalty_factors[0..p],
+        .lower_bounds = lower_bounds[0..p],
+        .upper_bounds = upper_bounds[0..p],
+        .n_lambda = nl,
+        .lambda_min_ratio = lambda_min_ratio,
+        .max_iter = max_iter,
+        .tol = tol,
+    };
+
     const n_iter = try regression.elasticNetPath(
         alloc,
         table.columns,
         y,
-        alpha,
-        penalty_factors[0..p],
-        lower_bounds[0..p],
-        upper_bounds[0..p],
-        nl,
-        lambda_min_ratio,
         out_coef_matrix[0 .. p * nl],
         out_lambdas[0..nl],
-        max_iter,
-        tol,
+        params,
     );
 
     return n_iter;
