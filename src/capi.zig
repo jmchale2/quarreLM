@@ -27,6 +27,9 @@ pub const ErrorCode = enum(c_int) {
     SingularMatrix = -7,
     OutOfMemory = -8,
     DegenerateData = -9,
+    EmptyStream = -10,
+    ChunkedNotSupported = -11,
+    BatchSchemaError = -12,
     Unknown = -99,
 };
 

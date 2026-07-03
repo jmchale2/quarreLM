@@ -43,6 +43,7 @@ pub const ArrowArrayStream = extern struct {
 pub const ArrowError = error{
     WrongFormat,
     NullBuffer,
+    EmptyStream,
     StreamError,
     SchemaError,
     HasNulls,

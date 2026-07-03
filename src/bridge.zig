@@ -7,7 +7,84 @@ pub const QuarrelError = arrow.ArrowError || error{
     SingularMatrix,
     OutOfMemory,
     DegenerateData,
+    SchemaError,
+    ChunkedNotSupported,
+    BatchSchemaError,
 };
+
+pub const Table = struct {
+    schema: arrow.ArrowSchema,
+    batches: std.ArrayList(arrow.ArrowArray),
+    columns: [][]const f64,
+    n_rows: usize,
+
+    pub fn deinit(self: *Table) void {
+        for (self.batches.items) |*b| {
+            if (b.release) |release| release(b);
+        }
+        if (self.schema.release) |release| release(&self.schema);
+    }
+};
+
+pub fn importStream(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p: usize) !Table {
+    var schema: arrow.ArrowSchema = undefined;
+    const schema_rc = stream.get_schema.?(stream, &schema);
+    if (schema_rc != 0) return arrow.ArrowError.SchemaError;
+
+    var batches: std.ArrayList(arrow.ArrowArray) = .empty;
+
+    errdefer {
+        for (batches.items) |*b| {
+            if (b.release) |release| release(b);
+        }
+        if (schema.release) |release| release(&schema);
+    }
+    while (true) {
+        var batch: arrow.ArrowArray = undefined;
+        if (stream.get_next.?(stream, &batch) != 0) return arrow.ArrowError.StreamError;
+        if (batch.release == null) break;
+        batches.append(alloc, batch) catch |err| {
+            // if batch fails to append, batch not in batches, so errdefer does NOT release.
+            if (batch.release) |rel| rel(&batch);
+            return err;
+        };
+    }
+
+    var n_rows: usize = 0;
+
+    // Currently do no support chunkes
+    if (batches.items.len == 0) return arrow.ArrowError.EmptyStream;
+    if (batches.items.len > 1) return error.ChunkedNotSupported;
+
+    const batch = batches.items[0];
+
+    // FUTURE:  can iterate over batches to handle chunks
+    // for (batches.items) |batch| {
+    n_rows += @intCast(batch.length);
+
+    if (schema.n_children != p) return error.SchemaError;
+    if (batch.n_children != p) return error.BatchSchemaError;
+
+    const columns = try alloc.alloc([]const f64, p);
+
+    for (0..p) |i| {
+        const child_array: *arrow.ArrowArray = @ptrCast(batch.children[i]);
+        const child_schema: *arrow.ArrowSchema = @ptrCast(schema.children[i]);
+        columns[i] = try arrow.asFloat64Slice(child_array, child_schema);
+    }
+    // }
+
+    return Table{
+        .schema = schema,
+        .batches = batches,
+        .columns = columns,
+        .n_rows = n_rows,
+    };
+}
+
+test "import stream compilation" {
+    _ = &importStream;
+}
 
 pub fn olsFit(
     stream_ptr: *arrow.ArrowArrayStream,
@@ -16,41 +93,22 @@ pub fn olsFit(
     out_coeffs: [*]f64,
     n_features: c_int,
 ) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
     const p: usize = @intCast(n_features);
 
     // Extract y
     const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
 
-    // Get schema from stream to validate
-    var schema: arrow.ArrowSchema = undefined;
-    const schema_rc = stream_ptr.get_schema.?(stream_ptr, &schema);
-    if (schema_rc != 0) return arrow.ArrowError.SchemaError;
-    defer {
-        if (schema.release) |release_fn| release_fn(&schema);
-    }
+    var table = try importStream(alloc, stream_ptr, p);
+    defer table.deinit();
 
-    // Read the batch from the stream
-    var batch: arrow.ArrowArray = undefined;
-    const batch_rc = stream_ptr.get_next.?(stream_ptr, &batch);
-    if (batch_rc != 0) return arrow.ArrowError.StreamError;
-    defer {
-        if (batch.release) |release_fn| release_fn(&batch);
-    }
-
-    // batch.children contains one ArrowArray per column
-    // schema.children contains one ArrowSchema per column
-    const allocator = std.heap.page_allocator;
-    const columns = try allocator.alloc([]const f64, p);
-    defer allocator.free(columns);
-
-    for (0..p) |i| {
-        const child_array: *arrow.ArrowArray = @ptrCast(batch.children[i]);
-        const child_schema: *arrow.ArrowSchema = @ptrCast(schema.children[i]);
-        columns[i] = try arrow.asFloat64Slice(child_array, child_schema);
-    }
+    if (y.len != table.n_rows) return error.DimensionMismatch;
 
     // Call the solver
-    try regression.olsFit(columns, y, out_coeffs[0..p]);
+    try regression.olsFit(table.columns, y, out_coeffs[0..p]);
 }
 
 pub fn olsFitVec(
@@ -60,41 +118,22 @@ pub fn olsFitVec(
     out_coeffs: [*]f64,
     n_features: c_int,
 ) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
     const p: usize = @intCast(n_features);
 
     // Extract y
     const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
 
-    // Get schema from stream to validate
-    var schema: arrow.ArrowSchema = undefined;
-    const schema_rc = stream_ptr.get_schema.?(stream_ptr, &schema);
-    if (schema_rc != 0) return arrow.ArrowError.SchemaError;
-    defer {
-        if (schema.release) |release_fn| release_fn(&schema);
-    }
+    var table = try importStream(alloc, stream_ptr, p);
+    defer table.deinit();
 
-    // Read the batch from the stream
-    var batch: arrow.ArrowArray = undefined;
-    const batch_rc = stream_ptr.get_next.?(stream_ptr, &batch);
-    if (batch_rc != 0) return arrow.ArrowError.StreamError;
-    defer {
-        if (batch.release) |release_fn| release_fn(&batch);
-    }
-
-    // batch.children contains one ArrowArray per column
-    // schema.children contains one ArrowSchema per column
-    const allocator = std.heap.page_allocator;
-    const columns = try allocator.alloc([]const f64, p);
-    defer allocator.free(columns);
-
-    for (0..p) |i| {
-        const child_array: *arrow.ArrowArray = @ptrCast(batch.children[i]);
-        const child_schema: *arrow.ArrowSchema = @ptrCast(schema.children[i]);
-        columns[i] = try arrow.asFloat64Slice(child_array, child_schema);
-    }
+    if (y.len != table.n_rows) return error.DimensionMismatch;
 
     // Call the solver
-    try regression.olsFitVec(columns, y, out_coeffs[0..p]);
+    try regression.olsFitVec(table.columns, y, out_coeffs[0..p]);
 }
 
 pub fn elasticNetFit(
@@ -120,34 +159,10 @@ pub fn elasticNetFit(
     // Extract y
     const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
 
-    // Get schema from stream to validate
-    var schema: arrow.ArrowSchema = undefined;
-    const schema_rc = stream_ptr.get_schema.?(stream_ptr, &schema);
-    if (schema_rc != 0) return arrow.ArrowError.SchemaError;
-    defer {
-        if (schema.release) |release_fn| release_fn(&schema);
-    }
+    var table = try importStream(alloc, stream_ptr, p);
+    defer table.deinit();
 
-    // Read the batch from the stream
-    var batch: arrow.ArrowArray = undefined;
-    const batch_rc = stream_ptr.get_next.?(stream_ptr, &batch);
-    if (batch_rc != 0) return arrow.ArrowError.StreamError;
-    defer {
-        if (batch.release) |release_fn| release_fn(&batch);
-    }
-
-    // batch.children contains one ArrowArray per column
-    // schema.children contains one ArrowSchema per column
-    const allocator = std.heap.page_allocator;
-    const columns = try allocator.alloc([]const f64, p);
-    defer allocator.free(columns);
-
-    for (0..p) |i| {
-        const child_array: *arrow.ArrowArray = @ptrCast(batch.children[i]);
-        const child_schema: *arrow.ArrowSchema = @ptrCast(schema.children[i]);
-        columns[i] = try arrow.asFloat64Slice(child_array, child_schema);
-    }
-
+    if (y.len != table.n_rows) return error.DimensionMismatch;
     // Call the solver
     // columns: []const []const f64,
     // y: []const f64,
@@ -161,7 +176,7 @@ pub fn elasticNetFit(
     // tol: f64,
     const n_iter = try regression.elasticNetFit(
         alloc,
-        columns,
+        table.columns,
         y,
         lambda,
         alpha,
@@ -201,30 +216,14 @@ pub fn elasticNetPath(
 
     const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
 
-    var schema: arrow.ArrowSchema = undefined;
-    const schema_rc = stream_ptr.get_schema.?(stream_ptr, &schema);
-    if (schema_rc != 0) return arrow.ArrowError.SchemaError;
-    defer {
-        if (schema.release) |release_fn| release_fn(&schema);
-    }
+    var table = try importStream(alloc, stream_ptr, p);
+    defer table.deinit();
 
-    var batch: arrow.ArrowArray = undefined;
-    const batch_rc = stream_ptr.get_next.?(stream_ptr, &batch);
-    if (batch_rc != 0) return arrow.ArrowError.StreamError;
-    defer {
-        if (batch.release) |release_fn| release_fn(&batch);
-    }
-
-    const columns = try alloc.alloc([]const f64, p);
-    for (0..p) |i| {
-        const child_array: *arrow.ArrowArray = @ptrCast(batch.children[i]);
-        const child_schema: *arrow.ArrowSchema = @ptrCast(schema.children[i]);
-        columns[i] = try arrow.asFloat64Slice(child_array, child_schema);
-    }
+    if (y.len != table.n_rows) return error.DimensionMismatch;
 
     const n_iter = try regression.elasticNetPath(
         alloc,
-        columns,
+        table.columns,
         y,
         alpha,
         penalty_factors[0..p],
