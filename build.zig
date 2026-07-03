@@ -28,12 +28,6 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
-    // const arrow_tests = b.addTest(.{ .root_module = b.createModule(.{
-    //     .root_source_file = b.path("src/arrow.zig"),
-    //     .target = target,
-    //     .optimize = optimize,
-    // }) });
-
     const blas_module = b.createModule(.{
         .root_source_file = b.path("src/blas.zig"),
         .target = target,
@@ -47,16 +41,9 @@ pub fn build(b: *std.Build) void {
 
     const blas_tests = b.addTest(.{ .root_module = blas_module });
 
-    // const regression_tests = b.addTest(.{ .root_module = b.createModule(.{
-    //     .root_source_file = b.path("src/regression.zig"),
-    //     .target = target,
-    //     .optimize = optimize,
-    // }) });
-
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
     const run_blas_tests = b.addRunArtifact(blas_tests);
-    // run_blas_tests.has_side_effects = true;
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_lib_tests.step);

@@ -46,6 +46,7 @@ fn errorCodeFromInt(code: c_int) ?ErrorCode {
 }
 
 fn errorToC(err: bridge.QuarrelError) c_int {
+    setLastError(err);
     return @intFromEnum(errorToErrorCode(err));
 }
 

@@ -557,8 +557,8 @@ test "elasticNet lasso zeros out irrelevant features" {
     const ub = [_]f64{ inf, inf };
 
     const params = EnetOptions{
-        .alpha = 0.0,
-        .lambda = 0.0,
+        .alpha = 1.0,
+        .lambda = 0.5,
         .penalty_factors = &pf,
         .lower_bounds = &lb,
         .upper_bounds = &ub,
@@ -588,8 +588,8 @@ test "elasticNet ridge shrinks but keeps all nonzero" {
     const ub = [_]f64{ inf, inf };
 
     const params = EnetOptions{
-        .alpha = 0.0,
-        .lambda = 0.0,
+        .alpha = 0.001,
+        .lambda = 0.5,
         .penalty_factors = &pf,
         .lower_bounds = &lb,
         .upper_bounds = &ub,
@@ -620,7 +620,7 @@ test "elasticNet warm start converges faster" {
     var coefs_cold = [_]f64{ 0.0, 0.0 };
 
     const params = EnetOptions{
-        .alpha = 0.0,
+        .alpha = 0.1,
         .lambda = 0.0,
         .penalty_factors = &pf,
         .lower_bounds = &lb,
@@ -821,8 +821,8 @@ test "elasticNet box constraints with regularization" {
     const ub = [_]f64{ inf, 0.3 }; // x2 <= 0.3
 
     const params = EnetOptions{
-        .alpha = 0.1,
-        .lambda = 0.5,
+        .alpha = 0.5,
+        .lambda = 0.1,
         .penalty_factors = &pf,
         .lower_bounds = &lb,
         .upper_bounds = &ub,
@@ -1024,7 +1024,7 @@ pub fn elasticNetPath(
             gram,
             xty,
             out_lambdas[k],
-            alpha_safe,
+            params.alpha,
             params.penalty_factors,
             params.lower_bounds,
             params.upper_bounds,
