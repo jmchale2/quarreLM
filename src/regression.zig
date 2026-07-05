@@ -485,7 +485,7 @@ pub fn elasticNetFit(
                 active[j] = true;
                 any_new = true;
                 // Actually perform the update
-                out_coefs[j] = beta_clamped / (col_norms_squared[j] + params.lambda * (1.0 - params.alpha));
+                out_coefs[j] = beta_clamped / (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
                 const delta = out_coefs[j];
                 if (delta != 0.0) {
                     //Update residuals
@@ -844,13 +844,7 @@ fn elasticNetFitInner(
     active: []bool, // pre-allocated
     gram: ?[]const f64,
     xty: ?[]const f64,
-    lambda: f64,
-    alpha: f64,
-    penalty_factors: []const f64,
-    lower_bounds: []const f64,
-    upper_bounds: []const f64,
-    max_iter: usize,
-    tol: f64,
+    params: EnetOptions,
 ) usize {
     const p = columns.len;
     const n = r.len;
@@ -861,9 +855,9 @@ fn elasticNetFitInner(
     var total_passes: usize = 0;
     var any_new = true;
 
-    while (any_new and total_passes < max_iter) {
+    while (any_new and total_passes < params.max_iter) {
         var max_change: f64 = 0.0;
-        while (total_passes < max_iter) {
+        while (total_passes < params.max_iter) {
             total_passes += 1;
             max_change = 0.0;
 
@@ -884,9 +878,9 @@ fn elasticNetFitInner(
                     }
                 };
 
-                const beta_new = softThreshold(rho_j, lambda * alpha * penalty_factors[j]) /
-                    (col_norms_squared[j] + lambda * (1.0 - alpha) * penalty_factors[j]);
-                const beta_clamped = clamp(beta_new, lower_bounds[j], upper_bounds[j]);
+                const beta_new = softThreshold(rho_j, params.lambda * params.alpha * params.penalty_factors[j]) /
+                    (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
+                const beta_clamped = clamp(beta_new, params.lower_bounds[j], params.upper_bounds[j]);
 
                 if (beta_clamped == 0.0) active[j] = false;
 
@@ -900,7 +894,7 @@ fn elasticNetFitInner(
                 }
                 coefs[j] = beta_clamped;
             }
-            if (max_change < tol) break;
+            if (max_change < params.tol) break;
         }
 
         any_new = false;
@@ -918,13 +912,14 @@ fn elasticNetFitInner(
                     break :blk dotProduct(columns[j], r) / n_f + col_norms_squared[j] * coefs[j];
                 }
             };
-            const beta_new = softThreshold(rho_j, lambda * alpha * penalty_factors[j]);
-            const beta_clamped = clamp(beta_new, lower_bounds[j], upper_bounds[j]);
+            const beta_new = softThreshold(rho_j, params.lambda * params.alpha * params.penalty_factors[j]) /
+                (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
+            const beta_clamped = clamp(beta_new, params.lower_bounds[j], params.upper_bounds[j]);
 
             if (beta_clamped != 0.0) {
                 active[j] = true;
                 any_new = true;
-                coefs[j] = beta_clamped / (col_norms_squared[j] + lambda * (1.0 - alpha) * penalty_factors[j]);
+                coefs[j] = beta_clamped / (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
                 const delta = coefs[j];
                 if (delta != 0.0) {
                     if (gram == null) {
@@ -935,7 +930,7 @@ fn elasticNetFitInner(
                 }
             }
         }
-        if (max_change < tol) break;
+        if (max_change < params.tol) break;
     }
 
     return total_passes;
@@ -1015,22 +1010,15 @@ pub fn elasticNetPath(
             active[j] = coefs[j] != 0.0;
         }
 
-        const iters = elasticNetFitInner(
-            columns,
-            r,
-            coefs,
-            col_norms_squared,
-            active,
-            gram,
-            xty,
-            out_lambdas[k],
-            params.alpha,
-            params.penalty_factors,
-            params.lower_bounds,
-            params.upper_bounds,
-            params.max_iter,
-            params.tol,
-        );
+        const iters = elasticNetFitInner(columns, r, coefs, col_norms_squared, active, gram, xty, .{
+            .lambda = out_lambdas[k],
+            .alpha = params.alpha,
+            .penalty_factors = params.penalty_factors,
+            .lower_bounds = params.lower_bounds,
+            .upper_bounds = params.upper_bounds,
+            .max_iter = params.max_iter,
+            .tol = params.tol,
+        });
         total_iters += iters;
 
         for (0..p) |j| {
