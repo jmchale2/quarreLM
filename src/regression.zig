@@ -397,8 +397,15 @@ pub fn elasticNetFit(
 ) !usize {
     const p = columns.len;
     const n = y.len;
-
     const n_f: f64 = @floatFromInt(n);
+
+    //check shapes
+    if (out_coefs.len != p or params.penalty_factors.len != p) return error.DimensionMismatch;
+    for (0..p) |j| {
+        if (columns[j].len != n) {
+            return error.DimensionMismatch;
+        }
+    }
 
     //residual
     const r = try alloc.alloc(f64, n);
@@ -406,9 +413,7 @@ pub fn elasticNetFit(
     for (0..p) |j| {
         if (out_coefs[j] != 0.0) {
             // subtract warm starts.
-            for (0..n) |i| {
-                r[i] -= columns[j][i] * out_coefs[j];
-            }
+            axpy(r, columns[j], out_coefs[j]);
         }
     }
 
@@ -419,89 +424,14 @@ pub fn elasticNetFit(
     }
 
     const active = try alloc.alloc(bool, p);
-    @memset(active, false);
     for (0..p) |j| {
         active[j] = out_coefs[j] != 0.0;
     }
 
-    var total_passes: usize = 0;
-    var any_new = true;
+    const gram: ?[]f64 = null;
+    const xty: ?[]f64 = null;
 
-    while (any_new and total_passes < params.max_iter) {
-        var max_change: f64 = 0.0;
-        while (total_passes < params.max_iter) {
-            total_passes += 1;
-            max_change = 0.0;
-
-            for (0..p) |j| {
-                if (!active[j]) continue;
-
-                const beta_old = out_coefs[j];
-
-                // rho_j = (1/N) * X_j^T r + beta_j (partial residuals)
-                const rho_j = dotProduct(columns[j], r) / n_f + col_norms_squared[j] * beta_old;
-
-                // soft threshold
-                const beta_new = softThreshold(rho_j, params.lambda * params.alpha * params.penalty_factors[j]) /
-                    (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
-                const beta_clamped = clamp(beta_new, params.lower_bounds[j], params.upper_bounds[j]);
-
-                if (beta_clamped == 0.0) {
-                    active[j] = false;
-                }
-
-                const delta = beta_clamped - beta_old;
-                if (delta != 0.0) {
-                    //Update residuals
-                    // r -= X_j * delta
-                    for (0..n) |i| {
-                        r[i] -= columns[j][i] * delta;
-                    }
-
-                    const change = col_norms_squared[j] * delta * delta;
-                    if (change > max_change) max_change = change;
-                }
-
-                out_coefs[j] = beta_clamped;
-            }
-
-            if (max_change < params.tol) break;
-        }
-
-        // check for new candidates
-        any_new = false;
-        // total_passes += 1;
-        max_change = 0.0;
-        for (0..p) |j| {
-            if (active[j]) continue;
-
-            const rho_j = dotProduct(columns[j], r) / n_f;
-
-            // soft threshold
-            const beta_new = softThreshold(rho_j, params.lambda * params.alpha * params.penalty_factors[j]);
-            const beta_clamped = std.math.clamp(beta_new, params.lower_bounds[j], params.upper_bounds[j]);
-
-            if (beta_clamped != 0.0) {
-                active[j] = true;
-                any_new = true;
-                // Actually perform the update
-                out_coefs[j] = beta_clamped / (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
-                const delta = out_coefs[j];
-                if (delta != 0.0) {
-                    //Update residuals
-                    // r -= X_j * delta
-                    for (0..n) |i| {
-                        r[i] -= columns[j][i] * delta;
-                    }
-
-                    const change = col_norms_squared[j] * delta * delta;
-                    if (change > max_change) max_change = change;
-                }
-            }
-        }
-
-        if (max_change < params.tol) break;
-    }
+    const total_passes = elasticNetFitInner(columns, r, out_coefs, col_norms_squared, active, gram, xty, params);
 
     return total_passes;
 }
@@ -509,6 +439,8 @@ pub fn elasticNetFit(
 // ============================================
 // elasticNet Tests
 // ============================================
+// High level, broad correctness tests, NOT specific proofs of correctness
+// More smoke tests to make sure the wheels didn't fall off than anything else
 test "elasticNet recovers known coefficients" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -919,15 +851,13 @@ fn elasticNetFitInner(
             if (beta_clamped != 0.0) {
                 active[j] = true;
                 any_new = true;
-                coefs[j] = beta_clamped / (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
-                const delta = coefs[j];
-                if (delta != 0.0) {
-                    if (gram == null) {
-                        axpy(r, columns[j], delta);
-                    }
-                    const change = col_norms_squared[j] * delta * delta;
-                    if (change > max_change) max_change = change;
+                coefs[j] = beta_clamped;
+                const delta = beta_clamped;
+                if (gram == null) {
+                    axpy(r, columns[j], delta);
                 }
+                const change = col_norms_squared[j] * delta * delta;
+                if (change > max_change) max_change = change;
             }
         }
         if (max_change < params.tol) break;
@@ -1142,5 +1072,91 @@ test "elasticNetPath warm starts reduce total iterations" {
         const at_max = @abs(out_coef_matrix[j * n_lambda + 0]);
         const at_min = @abs(out_coef_matrix[j * n_lambda + n_lambda - 1]);
         try std.testing.expect(at_min >= at_max);
+    }
+}
+
+/// Verify coefs satisfy the elastic-net KKT (optimality) conditions.
+/// Objective: (1/2n)||y-Xb||² + λαΣpf|b| + (λ(1-α)/2)Σpf·b²
+fn checkKKT(
+    alloc: std.mem.Allocator,
+    columns: []const []const f64,
+    y: []const f64,
+    coefs: []const f64,
+    params: EnetOptions,
+    kkt_tol: f64,
+) !void {
+    const p = columns.len;
+    const n = y.len;
+    const n_f: f64 = @floatFromInt(n);
+
+    const r = try alloc.alloc(f64, n);
+    defer alloc.free(r);
+    @memcpy(r, y);
+    for (0..p) |j| {
+        if (coefs[j] != 0.0) axpy(r, columns[j], coefs[j]);
+    }
+
+    for (0..p) |j| {
+        const grad = dotProduct(columns[j], r) / n_f; // X_j'r/n
+        const l1 = params.lambda * params.alpha * params.penalty_factors[j];
+        const l2 = params.lambda * (1.0 - params.alpha) * params.penalty_factors[j];
+        const b = coefs[j];
+        const at_lb = b <= params.lower_bounds[j] + 1e-12;
+        const at_ub = b >= params.upper_bounds[j] - 1e-12;
+
+        if (b == 0.0) {
+            // zero coord: |X_j'r/n| must be under the L1 threshold
+            try std.testing.expect(@abs(grad) <= l1 + kkt_tol);
+        } else if (at_ub) {
+            // pinned at upper bound: gradient may push further up, never down
+            try std.testing.expect(grad - l2 * b - l1 * std.math.sign(b) >= -kkt_tol);
+        } else if (at_lb) {
+            try std.testing.expect(grad - l2 * b - l1 * std.math.sign(b) <= kkt_tol);
+        } else {
+            // interior nonzero: stationarity, exactly
+            try std.testing.expectApproxEqAbs(l1 * std.math.sign(b), grad - l2 * b, kkt_tol);
+        }
+    }
+}
+
+test "elasticNet solutions satisfy KKT across lambda/alpha grid" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const n = 200;
+    const p = 4;
+    var xs: [p][n]f64 = undefined;
+    var y: [n]f64 = undefined;
+    for (0..n) |i| {
+        const t: f64 = @floatFromInt(i);
+        xs[0][i] = @sin(t * 0.13) * 2.0;
+        xs[1][i] = @cos(t * 0.31) + @sin(t * 0.05);
+        xs[2][i] = @sin(t * 0.71) * 0.5 + @cos(t * 0.11);
+        xs[3][i] = @cos(t * 0.97) * 1.5;
+        y[i] = 2.0 * xs[0][i] - 1.0 * xs[1][i] + 0.3 * xs[3][i] + @sin(t * 3.1) * 0.05;
+    }
+    const cols = [_][]const f64{ &xs[0], &xs[1], &xs[2], &xs[3] };
+    const pf = [_]f64{ 1.0, 1.0, 1.0, 1.0 };
+    const lb = [_]f64{ -inf, -inf, -inf, -inf };
+    const ub = [_]f64{ inf, inf, inf, inf };
+
+    const lambdas = [_]f64{ 0.5, 0.1, 0.01 };
+    const alphas = [_]f64{ 1.0, 0.5, 0.05 };
+    for (lambdas) |lam| {
+        for (alphas) |a| {
+            var coefs = [_]f64{ 0, 0, 0, 0 };
+            const params = EnetOptions{
+                .lambda = lam,
+                .alpha = a,
+                .penalty_factors = &pf,
+                .lower_bounds = &lb,
+                .upper_bounds = &ub,
+                .tol = 1e-14,
+                .max_iter = 100_000,
+            };
+            _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
+            try checkKKT(alloc, &cols, &y, &coefs, params, 1e-6);
+        }
     }
 }

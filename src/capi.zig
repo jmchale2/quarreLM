@@ -90,8 +90,6 @@ export fn quarrel_ols_fit_simd(
     out_coeffs: [*]f64,
     n_features: c_int,
 ) callconv(.c) c_int {
-
-    // Call the internal implementation, catching errors
     bridge.olsFitVec(
         stream_ptr,
         y_array_ptr,
@@ -111,7 +109,7 @@ export fn quarrel_enet_fit(
     penalty_factors: [*]f64,
     lower_bounds: [*]f64,
     upper_bounds: [*]f64,
-    out_coeffs: [*]f64,
+    out_coeffs: [*]f64, // inout param for warmstarts
     n_features: c_int,
     lambda: f64,
     alpha: f64,
@@ -120,7 +118,6 @@ export fn quarrel_enet_fit(
 ) callconv(.c) c_int {
     const max_iter_usize: usize = @intCast(max_iter);
 
-    // Call the internal implementation, catching errors
     const n_iter = bridge.elasticNetFit(
         stream_ptr,
         y_array_ptr,
@@ -147,7 +144,7 @@ export fn quarrel_enet_path(
     penalty_factors: [*]f64,
     lower_bounds: [*]f64,
     upper_bounds: [*]f64,
-    out_coef_matrix: [*]f64,
+    out_coef_matrix: [*]f64, //inout param for warmstarts
     out_lambdas: [*]f64,
     n_features: c_int,
     n_lambda: c_int,
