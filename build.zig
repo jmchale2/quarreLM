@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
 
     lib_module.linkSystemLibrary("openblas", .{ .use_pkg_config = .yes });
 
-    const lib = b.addLibrary(.{ .name = "quarreLM", .linkage = .dynamic, .root_module = lib_module });
+    const lib = b.addLibrary(.{ .name = "quarrelm", .linkage = .dynamic, .root_module = lib_module });
 
     lib.root_module.addOptions("build_options", options);
 

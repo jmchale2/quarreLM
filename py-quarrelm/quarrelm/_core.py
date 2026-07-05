@@ -26,8 +26,8 @@ def _find_lib() -> ctypes.CDLL:
     libpath = Path(__file__).parents[2].resolve()
 
     candidates = [
-        (libpath / f"zig-out/lib/libquarreLM{lib_suffix}"),
-        (libpath / f"libquarreLM{lib_suffix}"),
+        (libpath / f"zig-out/lib/libquarrelm{lib_suffix}"),
+        (libpath / f"libquarrelm{lib_suffix}"),
     ]
 
     for path in candidates:
