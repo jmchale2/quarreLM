@@ -30,6 +30,7 @@ pub const ErrorCode = enum(c_int) {
     EmptyStream = -10,
     ChunkedNotSupported = -11,
     BatchSchemaError = -12,
+    ParameterError = -13,
     Unknown = -99,
 };
 
@@ -182,4 +183,38 @@ export fn quarrel_ping() callconv(.c) c_int {
 /// Returns the library version as a static string.
 export fn quarrel_version() callconv(.c) [*:0]const u8 {
     return build_options.version ++ "\x00";
+}
+/// ABI probe: returns how many args crossed intact. Expected: 5.
+export fn quarrel_abi_probe(_: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, n: c_int, a: f64, b: f64, c: f64, m: c_int) callconv(.c) c_int {
+    var ok: c_int = 0;
+    if (n == 42) ok += 1;
+    if (a == 1.5) ok += 1;
+    if (b == 2.5) ok += 1;
+    if (c == 3.5) ok += 1;
+    if (m == 7) ok += 1;
+    return ok;
+}
+
+test "capi to bridge path" {
+    const inf_ = std.math.inf(f64);
+    var pf = [_]f64{ 1.0, 1.0 };
+    var lb = [_]f64{ -inf_, -inf_ };
+    var ub = [_]f64{ inf_, inf_ };
+    const lambda = 0.01;
+    const alpha = 0.5;
+    var c_out_coefs = [_]f64{ 0, 0 };
+    var out_coefs = [_]f64{ 0, 0 };
+
+    var s1 = bridge.mock.makeStream();
+    const rc = quarrel_enet_fit(&s1, &bridge.mock.y_array, &bridge.mock.y_schema, &pf, &lb, &ub, &c_out_coefs, 2, lambda, alpha, 1e-7, 1000);
+    try std.testing.expect(rc > 0);
+
+    var s2 = bridge.mock.makeStream();
+    const n_iter = try bridge.elasticNetFit(&s2, &bridge.mock.y_array, &bridge.mock.y_schema, &pf, &lb, &ub, &out_coefs, 2, lambda, alpha, 1e-7, 1000);
+    try std.testing.expectEqual(@as(c_int, @intCast(n_iter)), rc);
+
+    // coefs match
+
+    try std.testing.expectApproxEqRel(c_out_coefs[0], out_coefs[0], 1e-8);
+    try std.testing.expectApproxEqRel(c_out_coefs[1], out_coefs[1], 1e-8);
 }

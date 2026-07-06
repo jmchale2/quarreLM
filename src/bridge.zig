@@ -10,6 +10,7 @@ pub const QuarrelError = arrow.ArrowError || error{
     SchemaError,
     ChunkedNotSupported,
     BatchSchemaError,
+    ParameterError,
 };
 
 pub const Table = struct {
@@ -248,7 +249,7 @@ pub fn elasticNetPath(
 }
 
 // mock a stream
-const mock = struct {
+pub const mock = struct {
     const n = 8;
     var col0 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 };
     var col1 = [_]f64{ 8, 7, 6, 5, 4, 3, 2, 1 };
@@ -291,14 +292,14 @@ const mock = struct {
         return 0;
     }
 
-    fn makeStream() arrow.ArrowArrayStream {
+    pub fn makeStream() arrow.ArrowArrayStream {
         served = false;
         return .{ .get_schema = getSchema, .get_next = getNext, .get_last_error = null, .release = null, .private_data = null };
     }
 
     var y_bufs = [_]?*const anyopaque{ null, &yv };
-    var y_array = arrow.ArrowArray{ .length = n, .null_count = 0, .offset = 0, .n_buffers = 2, .n_children = 0, .buffers = &y_bufs, .children = null, .dictionary = null, .release = null, .private_data = null };
-    var y_schema = arrow.ArrowSchema{ .format = "g", .name = null, .metadata = null, .flags = 0, .n_children = 0, .children = null, .dictionary = null, .release = null, .private_data = null };
+    pub var y_array = arrow.ArrowArray{ .length = n, .null_count = 0, .offset = 0, .n_buffers = 2, .n_children = 0, .buffers = &y_bufs, .children = null, .dictionary = null, .release = null, .private_data = null };
+    pub var y_schema = arrow.ArrowSchema{ .format = "g", .name = null, .metadata = null, .flags = 0, .n_children = 0, .children = null, .dictionary = null, .release = null, .private_data = null };
 };
 
 test "bridge path: alpha actually reaches the solver (lambda_max scales as 1/alpha)" {
