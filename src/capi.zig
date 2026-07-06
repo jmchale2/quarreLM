@@ -9,7 +9,7 @@ var last_error_buf: [128]u8 = undefined;
 var last_error: [*:0]const u8 = "";
 
 fn setLastError(err: anyerror) void {
-    last_error = std.fmt.bufPrintZ(&last_error_buf, "{s}", .{@errorName(err)}) catch "error";
+    last_error = @errorName(err);
 }
 
 export fn quarrel_last_error() callconv(.c) [*:0]const u8 {
