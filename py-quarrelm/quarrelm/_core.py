@@ -1,14 +1,16 @@
 from pathlib import Path
 import ctypes
-
+from quarrelm.errors import raise_for_code
 
 import os
 import sys
 from dataclasses import dataclass
 from typing import Any
+from enum import IntEnum
 
 import narwhals as nw
 import numpy as np
+from numpy.typing import NDArray
 import pyarrow as pa
 
 
@@ -50,14 +52,12 @@ def get_version():
     return _lib.quarrel_version()
 
 
-def ping():
-    return _lib.quarrel_ping()
-
-
-_lib.quarrel_ping.restype = ctypes.c_int
-
 _lib.quarrel_ping.restype = ctypes.c_int
 _lib.quarrel_ping.argtypes = []
+
+
+def ping():
+    return _lib.quarrel_ping()
 
 
 def _extract_stream_pointer(obj) -> tuple[int, Any]:
@@ -96,6 +96,176 @@ def _get_array_len(arr):
     len = _lib.quarrel_array_len(array_ptr, schema_ptr)
 
     return len
+
+
+_lib.quarrel_error_name.restype = ctypes.c_char_p
+_lib.quarrel_error_name.argtypes = [ctypes.c_int]
+
+
+def quarrel_error_name(code: int):
+    return _lib.quarrel_error_name(code).decode()
+
+
+# Conversion to fit api, and not per solver calls
+
+
+class SOLVER(IntEnum):
+    OLS = 0
+    ENET = 1
+    ENET_PATH = 2
+
+
+class _CFitOptions(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint64),
+        ("lambda_", ctypes.c_double),
+        ("alpha", ctypes.c_double),
+        ("tol", ctypes.c_double),
+        ("max_iter", ctypes.c_uint64),
+        ("n_lambda", ctypes.c_uint64),
+        ("lambda_min_ratio", ctypes.c_double),
+        ("penalty_factors", ctypes.POINTER(ctypes.c_double)),
+        ("lower_bounds", ctypes.POINTER(ctypes.c_double)),
+        ("upper_bounds", ctypes.POINTER(ctypes.c_double)),
+        ("warm_start", ctypes.POINTER(ctypes.c_double)),
+    ]
+
+
+class _CFitResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint64),
+        ("n_iter", ctypes.c_uint64),
+        ("out_coefs", ctypes.POINTER(ctypes.c_double)),
+    ]
+
+
+def _ptr(arr, keepalive: list):
+    a = np.ascontiguousarray(arr, dtype=np.float64)
+    keepalive.append(a)  # numpy array must outlive the call
+    return a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+
+
+def _build_opts(
+    *,
+    lambda_,
+    alpha,
+    tol,
+    max_iter,
+    n_lambda=0,
+    lambda_min_ratio=0.0,
+    penalty_factors=None,
+    lower_bounds=None,
+    upper_bounds=None,
+    warm_start=None,
+):
+    opts = _CFitOptions()  # zero-initialized: all pointers start NULL
+    opts.struct_size = ctypes.sizeof(_CFitOptions)
+    opts.lambda_ = lambda_
+    opts.alpha = alpha
+    opts.tol = tol
+    opts.max_iter = max_iter
+    opts.n_lambda = n_lambda
+    opts.lambda_min_ratio = lambda_min_ratio
+
+    keepalive = []
+
+    if penalty_factors is not None:
+        opts.penalty_factors = _ptr(penalty_factors, keepalive)
+    if lower_bounds is not None:
+        opts.lower_bounds = _ptr(lower_bounds, keepalive)
+    if upper_bounds is not None:
+        opts.upper_bounds = _ptr(upper_bounds, keepalive)
+    if warm_start is not None:
+        opts.warm_start = _ptr(warm_start, keepalive)
+    return opts, keepalive
+
+
+def _build_result(n_features: int):
+    result = _CFitResult()
+    result.struct_size = ctypes.sizeof(_CFitResult)
+    out_coefs = np.zeros(n_features, dtype=np.float64)
+
+    keepalive = []
+
+    result.out_coefs = _ptr(out_coefs, keepalive)
+
+    return result, out_coefs
+
+
+_lib.quarrel_fit.restype = ctypes.c_int
+_lib.quarrel_fit.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_void_p,  # stream, y_array, y_schema
+    ctypes.c_int,  # solver
+    ctypes.POINTER(_CFitOptions),
+    ctypes.POINTER(_CFitResult),
+]
+
+
+def quarrel_fit(df, target: str, solver: SOLVER, warm_start: NDArray | None = None):
+    # call site:
+
+    nw_df = nw.from_native(df)
+    feature_names = [c for c in nw_df.columns if c != target]
+    n_features = len(feature_names)
+
+    if n_features == 0:
+        raise ValueError("No feature columns found")
+
+    # Select feature columns, cast to float64, convert to Arrow
+    features_df = nw_df.select(
+        *[nw.col(feature).cast(nw.Float64) for feature in feature_names]
+    )
+    features_arrow = features_df.to_native()
+
+    # Get the Arrow stream pointer for features
+    # Convert to pyarrow Table first if not already
+    if hasattr(features_arrow, "__arrow_c_stream__"):
+        features_pa = features_arrow
+    else:
+        features_pa = (
+            pa.Table.from_pandas(features_arrow)
+            if hasattr(features_arrow, "dtypes")
+            else pa.table(features_arrow)
+        )
+
+    stream_ptr, _capsule = _extract_stream_pointer(features_pa)
+
+    y_series = nw_df.get_column(target).cast(nw.Float64)
+    y_native = y_series.to_native()
+
+    if hasattr(y_native, "to_arrow"):
+        y_pa = y_native.to_arrow()  # Polars Series → pyarrow ChunkedArray
+        if isinstance(y_pa, pa.ChunkedArray):
+            y_pa = y_pa.combine_chunks()  # Ensure single chunk
+    elif isinstance(y_native, pa.Array):
+        y_pa = y_native
+    elif isinstance(y_native, pa.ChunkedArray):
+        y_pa = y_native.combine_chunks()
+    else:
+        y_pa = pa.array(y_native, type=pa.float64())
+
+    y_array_ptr, y_schema_ptr, _yac, _ysc = _extract_array_pointers(y_pa)
+
+    opts, _keep_o = _build_opts(lambda_=0.05, alpha=1.0, tol=1e-8, max_iter=10_000)
+    result, _keep_r = _build_result(n_features)
+    rc = _lib.quarrel_fit(
+        stream_ptr,
+        y_array_ptr,
+        y_schema_ptr,
+        ctypes.c_int(solver),
+        ctypes.byref(opts),
+        ctypes.byref(result),
+    )
+
+    raise_for_code(rc)
+
+    # TODO: convert result into a dataclass, based on solver
+    return rc
+
+
+# Old per solver calls
 
 
 @dataclass

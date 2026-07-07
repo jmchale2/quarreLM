@@ -11,6 +11,8 @@ pub const QuarrelError = arrow.ArrowError || error{
     ChunkedNotSupported,
     BatchSchemaError,
     ParameterError,
+
+    StructSizeMismatch,
 };
 
 pub const Table = struct {

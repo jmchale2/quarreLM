@@ -31,6 +31,7 @@ pub const ErrorCode = enum(c_int) {
     ChunkedNotSupported = -11,
     BatchSchemaError = -12,
     ParameterError = -13,
+    StructSizeMismatch = -14,
     Unknown = -99,
 };
 
@@ -62,6 +63,61 @@ export fn quarrel_array_len(arr_ptr: *arrow.ArrowArray, arr_schema_ptr: *arrow.A
         return -1;
     };
     return @as(i32, @intCast(arr.len));
+}
+
+pub const Solver = enum(c_int) {
+    ols = 0,
+    enet = 1,
+    enet_path = 2,
+};
+
+fn solverToCode(solver: Solver) Solver {
+    return switch (solver) {
+        inline else => |s| @field(Solver, s),
+    };
+}
+fn solverCodeFromInt(code: c_int) ?Solver {
+    inline for (@typeInfo(Solver).@"enum".fields) |f| {
+        if (code == f.value) return @enumFromInt(code);
+    }
+    return null;
+}
+
+pub const CFitOptions = extern struct {
+    struct_size: u64,
+    lambda: f64,
+    alpha: f64,
+    tol: f64,
+    max_iter: u64,
+    n_lambda: u64,
+    lambda_min_ratio: f64,
+    penalty_factors: ?[*]const f64,
+    lower_bounds: ?[*]const f64,
+    upper_bounds: ?[*]const f64,
+    warm_start: ?[*]const f64,
+};
+
+pub const CFitResult = extern struct {
+    struct_size: u64,
+    n_iter: u64,
+    out_coeffs: ?[*]f64,
+};
+
+export fn quarrel_fit(
+    stream: *arrow.ArrowArrayStream,
+    y: *arrow.ArrowArray,
+    y_schema: *arrow.ArrowSchema,
+    solver: c_int,
+    opts: *const CFitOptions,
+    out: *CFitResult,
+) callconv(.c) c_int {
+    if (opts.struct_size != @sizeOf(CFitOptions)) return -50;
+    _ = stream;
+    _ = y;
+    _ = y_schema;
+    _ = out;
+    _ = solver;
+    return 0;
 }
 
 export fn quarrel_ols_fit(

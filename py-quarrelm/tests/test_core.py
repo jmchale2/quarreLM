@@ -8,7 +8,14 @@ import polars as pl
 import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parents[1]))
-from quarrelm._core import _lib, enet
+from quarrelm._core import (
+    _lib,
+    enet,
+    quarrel_fit,
+    SOLVER,
+    quarrel_error_name,
+)
+from quarrelm.errors import ErrorCode
 
 
 def _small_df(n: int = 200, p: int = 3, seed: int = 0) -> pl.DataFrame:
@@ -54,3 +61,16 @@ def test_alpha_reaches_solver():
     assert not np.allclose(lasso.coef_array, ridge.coef_array), (
         "coefficients invariant to alpha — parameters are not reaching the solver"
     )
+
+
+def test_quarrel_fit_smoke():
+    df = _small_df()
+    rc = quarrel_fit(df, "y", SOLVER.ENET)
+
+    assert rc == 0
+
+
+def test_error_codes_match_zig():
+    for code in ErrorCode:
+        zig_name = quarrel_error_name(code)
+        assert zig_name == code.name, f"{code.value}: python={code.name} zig={zig_name}"
