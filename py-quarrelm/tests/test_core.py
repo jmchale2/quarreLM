@@ -12,6 +12,7 @@ from quarrelm._core import (
     _lib,
     enet,
     quarrel_fit,
+    quarrel_fit_path,
     SOLVER,
     quarrel_error_name,
 )
@@ -66,6 +67,13 @@ def test_alpha_reaches_solver():
 def test_quarrel_fit_smoke():
     df = _small_df()
     rc = quarrel_fit(df, "y", SOLVER.ENET)
+
+    assert rc == 0
+
+
+def test_quarrel_fit_path_smoke():
+    df = _small_df()
+    rc = quarrel_fit_path(df, "y", SOLVER.ENET, 100)
 
     assert rc == 0
 

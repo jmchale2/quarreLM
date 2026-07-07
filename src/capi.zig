@@ -103,6 +103,13 @@ pub const CFitResult = extern struct {
     out_coeffs: ?[*]f64,
 };
 
+pub const CPathResult = extern struct {
+    struct_size: u64,
+    n_iters: ?[*]u64,
+    lambda_paths: ?[*]f64,
+    out_coeffs_matrix: ?[*]f64,
+};
+
 export fn quarrel_fit(
     stream: *arrow.ArrowArrayStream,
     y: *arrow.ArrowArray,
@@ -119,6 +126,26 @@ export fn quarrel_fit(
     _ = solver;
     return 0;
 }
+
+export fn quarrel_fit_path(
+    stream: *arrow.ArrowArrayStream,
+    y: *arrow.ArrowArray,
+    y_schema: *arrow.ArrowSchema,
+    solver: c_int,
+    opts: *const CFitOptions,
+    out: *CPathResult,
+) callconv(.c) c_int {
+    if (opts.struct_size != @sizeOf(CFitOptions)) return -50;
+    _ = stream;
+    _ = y;
+    _ = y_schema;
+    _ = out;
+    _ = solver;
+    return 0;
+}
+//==============================
+//individual fit calls
+//==============================
 
 export fn quarrel_ols_fit(
     stream_ptr: *arrow.ArrowArrayStream,

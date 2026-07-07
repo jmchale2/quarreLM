@@ -90,12 +90,19 @@ test "import stream compilation" {
     _ = &importStream;
 }
 
-// When trasitioning to a solver/single fit call, will use tagged unions.
-// pub const FitParams = union(enum) {
-//     ols: void,
-//     enet: regression.EnetOptions,
-//     enet_path: regression.PathOptions,
-// };
+// =========================================
+// Coverting to a fit and fit_path structure
+// =========================================
+
+pub const FitParams = union(enum) {
+    ols: void,
+    enet: regression.EnetOptions,
+    enet_path: regression.PathOptions,
+};
+
+//===========================================
+//Individual Fit Calls
+//===========================================
 
 pub fn olsFit(
     stream_ptr: *arrow.ArrowArrayStream,

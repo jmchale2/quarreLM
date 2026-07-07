@@ -107,6 +107,59 @@ def quarrel_error_name(code: int):
 
 
 # Conversion to fit api, and not per solver calls
+class _ArrowData:
+    """Marshalled feature stream + y array for one native call.
+
+    The pointers are only valid while this object is alive."""
+
+    @classmethod
+    def from_frame(cls, df, target: str):
+        nw_df = nw.from_native(df)
+        cls.feature_names = [c for c in nw_df.columns if c != target]
+        cls.n_features = len(cls.feature_names)
+        if cls.n_features == 0:
+            raise ValueError("No feature columns found")
+
+        # --- features -> Arrow C stream ---
+        features_df = nw_df.select(
+            *[nw.col(f).cast(nw.Float64) for f in cls.feature_names]
+        )
+        features_arrow = features_df.to_native()
+        if hasattr(features_arrow, "__arrow_c_stream__"):
+            features_pa = features_arrow
+        else:
+            features_pa = (
+                pa.Table.from_pandas(features_arrow)
+                if hasattr(features_arrow, "dtypes")
+                else pa.table(features_arrow)
+            )
+        cls.stream_ptr, cls._stream_capsule = _extract_stream_pointer(features_pa)
+
+        # --- y -> Arrow C array ---
+        y_series = nw_df.get_column(target).cast(nw.Float64)
+        y_native = y_series.to_native()
+        if hasattr(y_native, "to_arrow"):
+            y_pa = y_native.to_arrow()
+            if isinstance(y_pa, pa.ChunkedArray):
+                y_pa = y_pa.combine_chunks()
+        elif isinstance(y_native, pa.Array):
+            y_pa = y_native
+        elif isinstance(y_native, pa.ChunkedArray):
+            y_pa = y_native.combine_chunks()
+        else:
+            y_pa = pa.array(y_native, type=pa.float64())
+        cls._y_pa = y_pa  # free insurance alongside the capsules
+        (
+            cls.y_array_ptr,
+            cls.y_schema_ptr,
+            cls._y_schema_capsule,
+            cls._y_array_capsule,
+        ) = _extract_array_pointers(y_pa)
+        return cls
+
+    # @classmethod
+    # def from_xy(cls, X, y):
+    #     pass
 
 
 class SOLVER(IntEnum):
@@ -139,18 +192,27 @@ class _CFitResult(ctypes.Structure):
     ]
 
 
-def _ptr(arr, keepalive: list):
-    a = np.ascontiguousarray(arr, dtype=np.float64)
+class _CPathResult(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint64),
+        ("n_iters", ctypes.POINTER(ctypes.c_uint64)),
+        ("lambda_paths", ctypes.POINTER(ctypes.c_double)),
+        ("out_coefs_matrix", ctypes.POINTER(ctypes.c_double)),
+    ]
+
+
+def _ptr(arr, keepalive: list, dtype=np.float64, ctype=ctypes.c_double):
+    a = np.ascontiguousarray(arr, dtype=dtype)
     keepalive.append(a)  # numpy array must outlive the call
-    return a.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+    return a.ctypes.data_as(ctypes.POINTER(ctype))
 
 
 def _build_opts(
     *,
-    lambda_,
-    alpha,
-    tol,
-    max_iter,
+    lambda_=1e-4,
+    alpha=0.5,
+    tol=1e-10,
+    max_iter=10_000,
     n_lambda=0,
     lambda_min_ratio=0.0,
     penalty_factors=None,
@@ -180,7 +242,7 @@ def _build_opts(
     return opts, keepalive
 
 
-def _build_result(n_features: int):
+def _build_fit_result(n_features: int):
     result = _CFitResult()
     result.struct_size = ctypes.sizeof(_CFitResult)
     out_coefs = np.zeros(n_features, dtype=np.float64)
@@ -190,6 +252,22 @@ def _build_result(n_features: int):
     result.out_coefs = _ptr(out_coefs, keepalive)
 
     return result, out_coefs
+
+
+def _build_path_result(n_features: int, n_lambdas: int):
+    result = _CPathResult()
+    result.struct_size = ctypes.sizeof(_CPathResult)
+    out_coefs = np.zeros(n_features * n_lambdas, dtype=np.float64)
+    lambdas = np.zeros(n_lambdas, dtype=np.float64)
+    n_iters = np.zeros(n_lambdas, dtype=np.uint64)
+
+    keepalive = []
+
+    result.out_coefs_matrix = _ptr(out_coefs, keepalive)
+    result.lambda_paths = _ptr(lambdas, keepalive)
+    result.n_iters = _ptr(n_iters, keepalive, dtype=np.uint64, ctype=ctypes.c_uint64)
+
+    return result, out_coefs, lambdas, n_iters
 
 
 _lib.quarrel_fit.restype = ctypes.c_int
@@ -204,56 +282,57 @@ _lib.quarrel_fit.argtypes = [
 
 
 def quarrel_fit(df, target: str, solver: SOLVER, warm_start: NDArray | None = None):
-    # call site:
-
-    nw_df = nw.from_native(df)
-    feature_names = [c for c in nw_df.columns if c != target]
-    n_features = len(feature_names)
-
-    if n_features == 0:
-        raise ValueError("No feature columns found")
-
-    # Select feature columns, cast to float64, convert to Arrow
-    features_df = nw_df.select(
-        *[nw.col(feature).cast(nw.Float64) for feature in feature_names]
+    data = _ArrowData.from_frame(df, target)
+    opts, _keep_o = _build_opts(
+        lambda_=0.05, alpha=1.0, tol=1e-8, max_iter=10_000, warm_start=warm_start
     )
-    features_arrow = features_df.to_native()
-
-    # Get the Arrow stream pointer for features
-    # Convert to pyarrow Table first if not already
-    if hasattr(features_arrow, "__arrow_c_stream__"):
-        features_pa = features_arrow
-    else:
-        features_pa = (
-            pa.Table.from_pandas(features_arrow)
-            if hasattr(features_arrow, "dtypes")
-            else pa.table(features_arrow)
-        )
-
-    stream_ptr, _capsule = _extract_stream_pointer(features_pa)
-
-    y_series = nw_df.get_column(target).cast(nw.Float64)
-    y_native = y_series.to_native()
-
-    if hasattr(y_native, "to_arrow"):
-        y_pa = y_native.to_arrow()  # Polars Series → pyarrow ChunkedArray
-        if isinstance(y_pa, pa.ChunkedArray):
-            y_pa = y_pa.combine_chunks()  # Ensure single chunk
-    elif isinstance(y_native, pa.Array):
-        y_pa = y_native
-    elif isinstance(y_native, pa.ChunkedArray):
-        y_pa = y_native.combine_chunks()
-    else:
-        y_pa = pa.array(y_native, type=pa.float64())
-
-    y_array_ptr, y_schema_ptr, _yac, _ysc = _extract_array_pointers(y_pa)
-
-    opts, _keep_o = _build_opts(lambda_=0.05, alpha=1.0, tol=1e-8, max_iter=10_000)
-    result, _keep_r = _build_result(n_features)
+    result, out_coefs = _build_fit_result(data.n_features)
     rc = _lib.quarrel_fit(
-        stream_ptr,
-        y_array_ptr,
-        y_schema_ptr,
+        data.stream_ptr,
+        data.y_array_ptr,
+        data.y_schema_ptr,
+        ctypes.c_int(solver),
+        ctypes.byref(opts),
+        ctypes.byref(result),
+    )
+
+    raise_for_code(rc)
+
+    # TODO: convert result into a dataclass, based on solver
+    return rc
+
+
+_lib.quarrel_fit_path.restype = ctypes.c_int
+_lib.quarrel_fit_path.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_void_p,  # stream, y_array, y_schema
+    ctypes.c_int,  # solver
+    ctypes.POINTER(_CFitOptions),
+    ctypes.POINTER(_CPathResult),
+]
+
+
+def quarrel_fit_path(
+    df, target: str, solver: SOLVER, n_lambda: int, warm_start: NDArray | None = None
+):
+    data = _ArrowData.from_frame(df, target)
+
+    opts, _keep_o = _build_opts(
+        lambda_=0.01,
+        alpha=1.0,
+        n_lambda=n_lambda,
+        tol=1e-8,
+        max_iter=10_000,
+        warm_start=warm_start,
+    )
+    result, out_coefs_arr, lambdas, n_iters = _build_path_result(
+        data.n_features, n_lambda
+    )
+    rc = _lib.quarrel_fit_path(
+        data.stream_ptr,
+        data.y_array_ptr,
+        data.y_schema_ptr,
         ctypes.c_int(solver),
         ctypes.byref(opts),
         ctypes.byref(result),
