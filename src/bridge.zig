@@ -138,7 +138,7 @@ pub fn fit(
     n_features: c_int,
     solver_enum: Solver,
     opts: FitOptions,
-    out: *const FitResult,
+    out: *FitResult,
 ) !usize {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();

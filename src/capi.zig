@@ -112,7 +112,7 @@ export fn quarrel_fit(
 
     const solver_enum = solverCodeFromInt(solver) orelse return errorToC(error.ParameterError);
 
-    if (solver_enum == bridge.Solver.ols) {
+    if (solver_enum == bridge.Solver.enet_path) {
         return errorToC(error.ParameterError);
     }
 
@@ -133,7 +133,7 @@ export fn quarrel_fit(
         .lambda_min_ratio = opts.lambda_min_ratio,
     };
 
-    const fit_out = bridge.FitResult{
+    var fit_out = bridge.FitResult{
         .out_coeffs = out_coeffs,
         .n_iter = undefined,
     };
@@ -142,13 +142,8 @@ export fn quarrel_fit(
         return errorToC(err);
     };
 
-    out.out_coeffs = fit_out.out_coeffs;
     out.n_iter = fit_out.n_iter;
-    if (return_code >= 0) {
-        return @intCast(return_code);
-    } else {
-        return errorToC(return_code);
-    }
+    return @intCast(return_code);
 }
 
 export fn quarrel_fit_path(
