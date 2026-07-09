@@ -15,6 +15,7 @@ from quarrelm._core import (
     quarrel_fit_path,
     SOLVER,
     quarrel_error_name,
+    quarrel_last_error,
 )
 from quarrelm.errors import ErrorCode
 

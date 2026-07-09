@@ -89,16 +89,114 @@ pub fn importStream(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p
 test "import stream compilation" {
     _ = &importStream;
 }
+fn sliceOrFill(alloc: std.mem.Allocator, ptr: ?[*]const f64, p: usize, fill: f64) ![]const f64 {
+    if (ptr) |raw| return raw[0..p];
+    const buf = try alloc.alloc(f64, p);
+    @memset(buf, fill);
+    return buf;
+}
 
 // =========================================
 // Coverting to a fit and fit_path structure
 // =========================================
-
-pub const FitParams = union(enum) {
-    ols: void,
-    enet: regression.EnetOptions,
-    enet_path: regression.PathOptions,
+//
+pub const CFitOptions = extern struct {
+    struct_size: u64,
+    lambda: f64,
+    alpha: f64,
+    tol: f64,
+    max_iter: u64,
+    n_lambda: u64,
+    lambda_min_ratio: f64,
+    penalty_factors: ?[*]const f64,
+    lower_bounds: ?[*]const f64,
+    upper_bounds: ?[*]const f64,
+    warm_start: ?[*]const f64,
 };
+
+pub const CFitResult = extern struct {
+    struct_size: u64,
+    n_iter: u64,
+    out_coeffs: ?[*]f64,
+};
+
+pub const CPathResult = extern struct {
+    struct_size: u64,
+    n_iters: ?[*]u64,
+    lambda_paths: ?[*]f64,
+    out_coeffs_matrix: ?[*]f64,
+};
+
+pub const Solver = enum(c_int) {
+    ols = 0,
+    enet = 1,
+    enet_path = 2,
+};
+
+pub fn fit(
+    stream_ptr: *arrow.ArrowArrayStream,
+    y_array_ptr: *arrow.ArrowArray,
+    y_schema_ptr: *arrow.ArrowSchema,
+    n_features: c_int,
+    solver_enum: Solver,
+    copts: CFitOptions,
+    out_coeffs: [*]f64,
+) !usize {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const p: usize = @intCast(n_features);
+    // Extract y
+    const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
+
+    var table = try importStream(alloc, stream_ptr, p);
+    defer table.deinit();
+
+    if (y.len != table.n_rows) return error.DimensionMismatch;
+
+    var n_iters: usize = undefined;
+    switch (solver_enum) {
+        .ols => {
+            _ = try regression.olsFitVec(table.columns, y, out_coeffs[0..p]);
+            n_iters = 0;
+        },
+        .enet => {
+            const penalty_factors = try sliceOrFill(alloc, copts.penalty_factors, p, 1.0);
+            const lower_bounds = try sliceOrFill(alloc, copts.lower_bounds, p, -std.math.inf(f64));
+            const upper_bounds = try sliceOrFill(alloc, copts.upper_bounds, p, std.math.inf(f64));
+
+            const enet_opts: regression.EnetOptions = .{
+                .lambda = copts.lambda,
+                .alpha = copts.alpha,
+                .penalty_factors = penalty_factors,
+                .lower_bounds = lower_bounds,
+                .upper_bounds = upper_bounds,
+                .max_iter = copts.max_iter,
+                .tol = copts.tol,
+            };
+
+            n_iters = try regression.elasticNetFit(alloc, table.columns, y, out_coeffs[0..p], enet_opts);
+        },
+        .enet_path => return error.ParameterError,
+    }
+
+    return n_iters;
+}
+
+test {
+    _ = &fit;
+}
+
+pub fn fit_path(solver_enum: Solver) !void {
+    _ = solver_enum;
+    // const params: FitParams = switch (solver_enum) {
+    //     .ols => return error.ParameterError,
+    //     .enet => return error.ParameterError,
+    //     .enet_path => .{ .enet_path = .{} },
+    // };
+
+}
 
 //===========================================
 //Individual Fit Calls

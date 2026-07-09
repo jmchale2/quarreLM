@@ -106,6 +106,13 @@ def quarrel_error_name(code: int):
     return _lib.quarrel_error_name(code).decode()
 
 
+_lib.quarrel_last_error.restype = ctypes.c_char_p
+
+
+def quarrel_last_error():
+    return _lib.quarrel_last_error()
+
+
 # Conversion to fit api, and not per solver calls
 class _ArrowData:
     """Marshalled feature stream + y array for one native call.
@@ -296,7 +303,7 @@ def quarrel_fit(df, target: str, solver: SOLVER, warm_start: NDArray | None = No
         ctypes.byref(result),
     )
 
-    raise_for_code(rc)
+    raise_for_code(rc, _lib.quarrel_last_error().decode())
 
     # TODO: convert result into a dataclass, based on solver
     return rc
@@ -338,7 +345,7 @@ def quarrel_fit_path(
         ctypes.byref(result),
     )
 
-    raise_for_code(rc)
+    raise_for_code(rc, quarrel_last_error().decode())
 
     # TODO: convert result into a dataclass, based on solver
     return rc
