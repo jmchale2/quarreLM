@@ -11,7 +11,7 @@ pub const QuarrelError = arrow.ArrowError || error{
     ChunkedNotSupported,
     BatchSchemaError,
     ParameterError,
-
+    WrongAPICall,
     StructSizeMismatch,
 };
 
@@ -100,37 +100,35 @@ fn sliceOrFill(alloc: std.mem.Allocator, ptr: ?[*]const f64, p: usize, fill: f64
 // Coverting to a fit and fit_path structure
 // =========================================
 //
-pub const CFitOptions = extern struct {
-    struct_size: u64,
-    lambda: f64,
+
+pub const Solver = enum(c_int) {
+    ols = 0,
+    enet = 1,
+    enet_path = 2,
+};
+
+pub const FitOptions = struct {
     alpha: f64,
+    lambda: f64,
     tol: f64,
     max_iter: u64,
-    n_lambda: u64,
-    lambda_min_ratio: f64,
+    n_lambda: ?u64,
+    lambda_min_ratio: ?f64,
     penalty_factors: ?[*]const f64,
     lower_bounds: ?[*]const f64,
     upper_bounds: ?[*]const f64,
     warm_start: ?[*]const f64,
 };
 
-pub const CFitResult = extern struct {
-    struct_size: u64,
+pub const FitResult = struct {
     n_iter: u64,
-    out_coeffs: ?[*]f64,
+    out_coeffs: [*]f64,
 };
 
-pub const CPathResult = extern struct {
-    struct_size: u64,
-    n_iters: ?[*]u64,
-    lambda_paths: ?[*]f64,
-    out_coeffs_matrix: ?[*]f64,
-};
-
-pub const Solver = enum(c_int) {
-    ols = 0,
-    enet = 1,
-    enet_path = 2,
+pub const PathResult = struct {
+    n_iters: [*]u64,
+    lambda_paths: [*]f64,
+    out_coeffs_matrix: [*]f64,
 };
 
 pub fn fit(
@@ -139,8 +137,8 @@ pub fn fit(
     y_schema_ptr: *arrow.ArrowSchema,
     n_features: c_int,
     solver_enum: Solver,
-    copts: CFitOptions,
-    out_coeffs: [*]f64,
+    opts: FitOptions,
+    out: *const FitResult,
 ) !usize {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
@@ -158,25 +156,27 @@ pub fn fit(
     var n_iters: usize = undefined;
     switch (solver_enum) {
         .ols => {
-            _ = try regression.olsFitVec(table.columns, y, out_coeffs[0..p]);
+            _ = try regression.olsFitVec(table.columns, y, out.out_coeffs[0..p]);
             n_iters = 0;
         },
         .enet => {
-            const penalty_factors = try sliceOrFill(alloc, copts.penalty_factors, p, 1.0);
-            const lower_bounds = try sliceOrFill(alloc, copts.lower_bounds, p, -std.math.inf(f64));
-            const upper_bounds = try sliceOrFill(alloc, copts.upper_bounds, p, std.math.inf(f64));
+            const penalty_factors = try sliceOrFill(alloc, opts.penalty_factors, p, 1.0);
+            const lower_bounds = try sliceOrFill(alloc, opts.lower_bounds, p, -std.math.inf(f64));
+            const upper_bounds = try sliceOrFill(alloc, opts.upper_bounds, p, std.math.inf(f64));
+
+            //TODO: Handle Warm Starts here!
 
             const enet_opts: regression.EnetOptions = .{
-                .lambda = copts.lambda,
-                .alpha = copts.alpha,
+                .lambda = opts.lambda,
+                .alpha = opts.alpha,
                 .penalty_factors = penalty_factors,
                 .lower_bounds = lower_bounds,
                 .upper_bounds = upper_bounds,
-                .max_iter = copts.max_iter,
-                .tol = copts.tol,
+                .max_iter = opts.max_iter,
+                .tol = opts.tol,
             };
 
-            n_iters = try regression.elasticNetFit(alloc, table.columns, y, out_coeffs[0..p], enet_opts);
+            n_iters = try regression.elasticNetFit(alloc, table.columns, y, out.out_coeffs[0..p], enet_opts);
         },
         .enet_path => return error.ParameterError,
     }

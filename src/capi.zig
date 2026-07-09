@@ -31,6 +31,7 @@ pub const ErrorCode = enum(c_int) {
     BatchSchemaError = -12,
     ParameterError = -13,
     StructSizeMismatch = -14,
+    WrongAPICall = -15,
     Unknown = -99,
 };
 
@@ -71,24 +72,83 @@ fn solverCodeFromInt(code: c_int) ?bridge.Solver {
     return std.enums.fromInt(bridge.Solver, code);
 }
 
+pub const CFitOptions = extern struct {
+    struct_size: u64,
+    lambda: f64,
+    alpha: f64,
+    tol: f64,
+    max_iter: u64,
+    n_lambda: u64,
+    lambda_min_ratio: f64,
+    penalty_factors: ?[*]const f64,
+    lower_bounds: ?[*]const f64,
+    upper_bounds: ?[*]const f64,
+    warm_start: ?[*]const f64,
+};
+
+pub const CFitResult = extern struct {
+    struct_size: u64,
+    n_iter: u64,
+    out_coeffs: ?[*]f64,
+};
+
+pub const CPathResult = extern struct {
+    struct_size: u64,
+    n_iters: ?[*]u64,
+    lambda_paths: ?[*]f64,
+    out_coeffs_matrix: ?[*]f64,
+};
+
 export fn quarrel_fit(
     stream: *arrow.ArrowArrayStream,
     y: *arrow.ArrowArray,
     y_schema: *arrow.ArrowSchema,
+    n_features: c_int,
     solver: c_int,
-    opts: *const bridge.CFitOptions,
-    out: *bridge.CFitResult,
+    opts: *const CFitOptions,
+    out: *CFitResult,
 ) callconv(.c) c_int {
-    if (opts.struct_size != @sizeOf(bridge.CFitOptions)) return errorToC(error.StructSizeMismatch);
+    if (opts.struct_size != @sizeOf(CFitOptions)) return errorToC(error.StructSizeMismatch);
 
     const solver_enum = solverCodeFromInt(solver) orelse return errorToC(error.ParameterError);
 
-    _ = solver_enum;
-    _ = stream;
-    _ = y;
-    _ = y_schema;
-    _ = out;
-    return 0;
+    if (solver_enum == bridge.Solver.ols) {
+        return errorToC(error.ParameterError);
+    }
+
+    const out_coeffs = out.out_coeffs orelse return errorToC(error.ParameterError);
+
+    const fit_opts = bridge.FitOptions{
+        .alpha = opts.alpha,
+        .lambda = opts.lambda,
+        .penalty_factors = opts.penalty_factors,
+        .lower_bounds = opts.lower_bounds,
+        .upper_bounds = opts.upper_bounds,
+        .warm_start = opts.warm_start,
+        .tol = opts.tol,
+        .max_iter = opts.max_iter,
+
+        // path only
+        .n_lambda = opts.n_lambda,
+        .lambda_min_ratio = opts.lambda_min_ratio,
+    };
+
+    const fit_out = bridge.FitResult{
+        .out_coeffs = out_coeffs,
+        .n_iter = undefined,
+    };
+
+    const return_code = bridge.fit(stream, y, y_schema, n_features, solver_enum, fit_opts, &fit_out) catch |err| {
+        return errorToC(err);
+    };
+
+    out.out_coeffs = fit_out.out_coeffs;
+    out.n_iter = fit_out.n_iter;
+    if (return_code >= 0) {
+        return @intCast(return_code);
+    } else {
+        return errorToC(return_code);
+    }
 }
 
 export fn quarrel_fit_path(
@@ -96,10 +156,10 @@ export fn quarrel_fit_path(
     y: *arrow.ArrowArray,
     y_schema: *arrow.ArrowSchema,
     solver: c_int,
-    opts: *const bridge.CFitOptions,
-    out: *bridge.CPathResult,
+    opts: *const CFitOptions,
+    out: *CPathResult,
 ) callconv(.c) c_int {
-    if (opts.struct_size != @sizeOf(bridge.CFitOptions)) return errorToC(error.StructSizeMismatch);
+    if (opts.struct_size != @sizeOf(CFitOptions)) return errorToC(error.StructSizeMismatch);
     _ = stream;
     _ = y;
     _ = y_schema;
