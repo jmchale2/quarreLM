@@ -11,7 +11,7 @@ fn errorToC(err: errors.QError) c_int {
     return @intFromEnum(errors.errorToErrorCode(err));
 }
 
-var last_error: [*:0]const u8 = "";
+threadlocal var last_error: [*:0]const u8 = "";
 
 fn setLastError(err: anyerror) void {
     last_error = @errorName(err);

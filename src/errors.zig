@@ -1,3 +1,4 @@
+const std = @import("std");
 const arrow = @import("arrow.zig");
 
 pub const QError = arrow.ArrowError || error{
@@ -40,9 +41,6 @@ pub fn errorToErrorCode(err: QError) ErrorCode {
         inline else => |e| @field(ErrorCode, @errorName(e)),
     };
 }
-pub fn errorCodeFromInt(code: c_int) ?ErrorCode {
-    inline for (@typeInfo(ErrorCode).@"enum".fields) |f| {
-        if (code == f.value) return @enumFromInt(code);
-    }
-    return null;
+pub fn errorCodeFromInt(code: c_int) ErrorCode {
+    return std.enums.fromInt(ErrorCode, code);
 }
