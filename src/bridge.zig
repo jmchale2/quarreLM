@@ -2,19 +2,7 @@ const arrow = @import("arrow.zig");
 const std = @import("std");
 const regression = @import("regression.zig");
 
-pub const QuarrelError = arrow.ArrowError || error{
-    DimensionMismatch,
-    SingularMatrix,
-    OutOfMemory,
-    DegenerateData,
-    SchemaError,
-    ChunkedNotSupported,
-    BatchSchemaError,
-    ParameterError,
-    WrongAPICall,
-    StructSizeMismatch,
-    InvalidValue,
-};
+const errors = @import("errors.zig");
 
 pub const Table = struct {
     schema: arrow.ArrowSchema,
@@ -59,7 +47,7 @@ pub fn importStream(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p
 
     // Currently do no support chunkes
     if (batches.items.len == 0) return arrow.ArrowError.EmptyStream;
-    if (batches.items.len > 1) return error.ChunkedNotSupported;
+    if (batches.items.len > 1) return errors.QError.ChunkedNotSupported;
 
     const batch = batches.items[0];
 
@@ -67,8 +55,8 @@ pub fn importStream(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p
     // for (batches.items) |batch| {
     n_rows += @intCast(batch.length);
 
-    if (schema.n_children != p) return error.SchemaError;
-    if (batch.n_children != p) return error.BatchSchemaError;
+    if (schema.n_children != p) return errors.QError.SchemaError;
+    if (batch.n_children != p) return errors.QError.BatchSchemaError;
 
     const columns = try alloc.alloc([]const f64, p);
 
@@ -152,7 +140,7 @@ pub fn fit(
     var table = try importStream(alloc, stream_ptr, p);
     defer table.deinit();
 
-    if (y.len != table.n_rows) return error.DimensionMismatch;
+    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
 
     var n_iters: usize = undefined;
     switch (solver_enum) {
@@ -179,7 +167,7 @@ pub fn fit(
 
             n_iters = try regression.elasticNetFit(alloc, table.columns, y, out.out_coeffs[0..p], enet_opts);
         },
-        .enet_path => return error.ParameterError,
+        .enet_path => return errors.QError.ParameterError,
     }
 
     return n_iters;
@@ -209,25 +197,24 @@ pub fn fit_path(
     var table = try importStream(alloc, stream_ptr, p);
     defer table.deinit();
 
-    if (y.len != table.n_rows) return error.DimensionMismatch;
+    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
 
     var n_iters: usize = undefined;
     switch (solver_enum) {
         .ols => {
-            return QuarrelError.WrongAPICall;
+            return errors.QError.WrongAPICall;
         },
         .enet => {
-            return QuarrelError.WrongAPICall;
+            return errors.QError.WrongAPICall;
         },
         .enet_path => {
             const penalty_factors = try sliceOrFill(alloc, opts.penalty_factors, p, 1.0);
             const lower_bounds = try sliceOrFill(alloc, opts.lower_bounds, p, -std.math.inf(f64));
             const upper_bounds = try sliceOrFill(alloc, opts.upper_bounds, p, std.math.inf(f64));
-
             const lambda_min_ratio: f64 = opts.lambda_min_ratio orelse
                 if (table.n_rows >= p) 1e-4 else 1e-2;
 
-            const n_lambda = opts.n_lambda orelse return error.ParameterError;
+            const n_lambda = opts.n_lambda orelse return errors.QError.ParameterError;
 
             //TODO: Handle Warm Starts here!
 
@@ -242,12 +229,15 @@ pub fn fit_path(
                 .tol = opts.tol,
             };
 
+            //TODO: Handle out iters!
+
             n_iters = try regression.elasticNetPath(
                 alloc,
                 table.columns,
                 y,
                 out.out_coeffs_matrix[0 .. p * n_lambda],
                 out.lambda_paths[0..n_lambda],
+                out.n_iters[0..n_lambda],
                 path_opts,
             );
         },
@@ -282,7 +272,7 @@ pub fn olsFit(
     var table = try importStream(alloc, stream_ptr, p);
     defer table.deinit();
 
-    if (y.len != table.n_rows) return error.DimensionMismatch;
+    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
 
     // Call the solver
     try regression.olsFit(table.columns, y, out_coeffs[0..p]);
@@ -307,7 +297,7 @@ pub fn olsFitVec(
     var table = try importStream(alloc, stream_ptr, p);
     defer table.deinit();
 
-    if (y.len != table.n_rows) return error.DimensionMismatch;
+    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
 
     // Call the solver
     try regression.olsFitVec(table.columns, y, out_coeffs[0..p]);
@@ -339,7 +329,7 @@ pub fn elasticNetFit(
     var table = try importStream(alloc, stream_ptr, p);
     defer table.deinit();
 
-    if (y.len != table.n_rows) return error.DimensionMismatch;
+    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
 
     // marshall params
     const params = regression.EnetOptions{
@@ -391,7 +381,7 @@ pub fn elasticNetPath(
     var table = try importStream(alloc, stream_ptr, p);
     defer table.deinit();
 
-    if (y.len != table.n_rows) return error.DimensionMismatch;
+    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
 
     const params = regression.PathOptions{
         .alpha = alpha,
@@ -404,12 +394,16 @@ pub fn elasticNetPath(
         .tol = tol,
     };
 
+    var out_iters = try alloc.alloc(u64, nl);
+    @memset(out_iters, 0);
+
     const n_iter = try regression.elasticNetPath(
         alloc,
         table.columns,
         y,
         out_coef_matrix[0 .. p * nl],
         out_lambdas[0..nl],
+        out_iters[0..nl],
         params,
     );
 

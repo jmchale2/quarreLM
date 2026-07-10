@@ -1,4 +1,5 @@
 const std = @import("std");
+const errors = @import("errors.zig");
 
 const inf = std.math.inf(f64);
 const clamp = std.math.clamp;
@@ -37,9 +38,9 @@ pub fn olsFit(
     const n = y.len;
 
     for (columns) |col| {
-        if (col.len != n) return error.DimensionMismatch;
+        if (col.len != n) return errors.QError.DimensionMismatch;
     }
-    if (out_coefs.len != p) return error.DimensionMismatch;
+    if (out_coefs.len != p) return errors.QError.DimensionMismatch;
 
     // X'X (p x p symmetric matrix)
     const xtx = try alloc.alloc(f64, p * p);
@@ -100,7 +101,7 @@ pub fn olsFit(
 
         // Eliminate below
         const pivot = aug[col * (p + 1) + col];
-        if (@abs(pivot) < 1e-12) return error.SingularMatrix;
+        if (@abs(pivot) < 1e-12) return errors.QError.SingularMatrix;
 
         for (col + 1..p) |row| {
             const factor = aug[row * (p + 1) + col] / pivot;
@@ -253,9 +254,9 @@ pub fn olsFitVec(
     const n = y.len;
 
     for (columns) |col| {
-        if (col.len != n) return error.DimensionMismatch;
+        if (col.len != n) return errors.QError.DimensionMismatch;
     }
-    if (out_coefs.len != p) return error.DimensionMismatch;
+    if (out_coefs.len != p) return errors.QError.DimensionMismatch;
 
     // X'X (p x p symmetric matrix)
     const xtx = try alloc.alloc(f64, p * p);
@@ -310,7 +311,7 @@ pub fn olsFitVec(
 
         // Eliminate below
         const pivot = aug[col * (p + 1) + col];
-        if (@abs(pivot) < 1e-12) return error.SingularMatrix;
+        if (@abs(pivot) < 1e-12) return errors.QError.SingularMatrix;
 
         for (col + 1..p) |row| {
             const factor = aug[row * (p + 1) + col] / pivot;
@@ -400,10 +401,10 @@ pub fn elasticNetFit(
     const n_f: f64 = @floatFromInt(n);
 
     //check shapes
-    if (out_coefs.len != p or params.penalty_factors.len != p) return error.DimensionMismatch;
+    if (out_coefs.len != p or params.penalty_factors.len != p) return errors.QError.DimensionMismatch;
     for (0..p) |j| {
         if (columns[j].len != n) {
-            return error.DimensionMismatch;
+            return errors.QError.DimensionMismatch;
         }
     }
 
@@ -872,6 +873,7 @@ pub fn elasticNetPath(
     //outputs, px n_lamba
     out_coefs_matrix: []f64, // coef j, offset at lambda k = [j*n_lambda + k]
     out_lambdas: []f64,
+    out_iters: []u64,
     params: PathOptions,
 ) !usize {
     const p = columns.len;
@@ -887,7 +889,7 @@ pub fn elasticNetPath(
         const xty_j = @abs(dotProduct(columns[j], y)) / (n_f * alpha_safe * params.penalty_factors[j]);
         if (xty_j > lambda_max) lambda_max = xty_j;
     }
-    if (lambda_max < 1e-10) return error.DegenerateData;
+    if (lambda_max < 1e-10) return errors.QError.DegenerateData;
 
     const log_lambda_max = @log(lambda_max);
     const log_lambda_min = @log(lambda_max * params.lambda_min_ratio);
@@ -949,6 +951,8 @@ pub fn elasticNetPath(
             .max_iter = params.max_iter,
             .tol = params.tol,
         });
+        out_iters[k] = iters;
+
         total_iters += iters;
 
         for (0..p) |j| {
@@ -961,6 +965,54 @@ pub fn elasticNetPath(
 // ============================================
 // elasticNetPath Tests
 // ============================================
+//
+test "elasticNetPath has positive n_iters" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const n = 500;
+
+    // Generate simple synthetic data: y = 2*x1 + 3*x2 +  noise
+    var x1: [n]f64 = undefined;
+    var x2: [n]f64 = undefined;
+    var y: [n]f64 = undefined;
+
+    // Simple deterministic "random" data
+    for (0..n) |i| {
+        const t: f64 = @floatFromInt(i);
+        x1[i] = @sin(t * 0.1) * 3.0 + t * 0.01;
+        x2[i] = @cos(t * 0.07) * 2.0 - t * 0.005;
+        y[i] = 2.0 * x1[i] + 3.0 * x2[i] + @sin(t * 1.7) * 0.1;
+    }
+
+    const cols = [_][]const f64{ &x1, &x2 };
+    const pf = [_]f64{ 1.0, 1.0 };
+    const lb = [_]f64{ -inf, -inf };
+    const ub = [_]f64{ inf, inf };
+
+    const n_lambda = 20;
+    var out_lambdas: [n_lambda]f64 = undefined;
+    var out_coef_matrix: [2 * n_lambda]f64 = undefined;
+    var out_iters = [_]u64{0} ** n_lambda;
+
+    _ = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, &out_iters, .{
+        .alpha = 1.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .n_lambda = n_lambda,
+        .lambda_min_ratio = 1e-4,
+        .tol = 1e-10,
+        // max_iter: struct default (10_000)
+    });
+
+    // All fits should have a positive number if n_iters
+    for (0..n_lambda) |k| {
+        try std.testing.expect(out_iters[k] > 0);
+    }
+}
+
 test "elasticNetPath produces decreasing lambda sequence" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -989,8 +1041,9 @@ test "elasticNetPath produces decreasing lambda sequence" {
     const n_lambda = 20;
     var out_lambdas: [n_lambda]f64 = undefined;
     var out_coef_matrix: [2 * n_lambda]f64 = undefined;
+    var out_iters: [n_lambda]u64 = undefined;
 
-    _ = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, .{
+    _ = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, &out_iters, .{
         .alpha = 1.0,
         .penalty_factors = &pf,
         .lower_bounds = &lb,
@@ -1052,8 +1105,9 @@ test "elasticNetPath warm starts reduce total iterations" {
     const n_lambda = 50;
     var out_lambdas: [n_lambda]f64 = undefined;
     var out_coef_matrix: [p * n_lambda]f64 = undefined;
+    var out_iters: [n_lambda]u64 = undefined;
 
-    const path_iters = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, .{
+    const path_iters = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, &out_iters, .{
         .alpha = 1.0,
         .penalty_factors = &pf,
         .lower_bounds = &lb,

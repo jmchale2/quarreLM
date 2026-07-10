@@ -1,9 +1,15 @@
 const std = @import("std");
 const arrow = @import("arrow.zig");
 const bridge = @import("bridge.zig");
+const errors = @import("errors.zig");
 
 const build_options = @import("build_options");
 // C ABI Exports - consumed from the python side of the fence
+
+fn errorToC(err: errors.QError) c_int {
+    setLastError(err);
+    return @intFromEnum(errors.errorToErrorCode(err));
+}
 
 var last_error: [*:0]const u8 = "";
 
@@ -15,46 +21,8 @@ export fn quarrel_last_error() callconv(.c) [*:0]const u8 {
     return last_error;
 }
 
-pub const ErrorCode = enum(c_int) {
-    Ok = 0,
-    WrongFormat = -1,
-    HasNulls = -2,
-    NullBuffer = -3,
-    StreamError = -4,
-    SchemaError = -5,
-    DimensionMismatch = -6,
-    SingularMatrix = -7,
-    OutOfMemory = -8,
-    DegenerateData = -9,
-    EmptyStream = -10,
-    ChunkedNotSupported = -11,
-    BatchSchemaError = -12,
-    ParameterError = -13,
-    StructSizeMismatch = -14,
-    WrongAPICall = -15,
-    InvalidValue = -16,
-    Unknown = -99,
-};
-
-fn errorToErrorCode(err: bridge.QuarrelError) ErrorCode {
-    return switch (err) {
-        inline else => |e| @field(ErrorCode, @errorName(e)),
-    };
-}
-fn errorCodeFromInt(code: c_int) ?ErrorCode {
-    inline for (@typeInfo(ErrorCode).@"enum".fields) |f| {
-        if (code == f.value) return @enumFromInt(code);
-    }
-    return null;
-}
-
-fn errorToC(err: bridge.QuarrelError) c_int {
-    setLastError(err);
-    return @intFromEnum(errorToErrorCode(err));
-}
-
 export fn quarrel_error_name(code: c_int) callconv(.c) [*:0]const u8 {
-    const ec = std.enums.fromInt(ErrorCode, code) orelse return "InvalidErrorCode";
+    const ec = std.enums.fromInt(errors.ErrorCode, code) orelse return "InvalidErrorCode";
     return @tagName(ec);
 }
 
@@ -109,15 +77,15 @@ export fn quarrel_fit(
     opts: *const CFitOptions,
     out: *CFitResult,
 ) callconv(.c) c_int {
-    if (opts.struct_size != @sizeOf(CFitOptions)) return errorToC(error.StructSizeMismatch);
+    if (opts.struct_size != @sizeOf(CFitOptions)) return errorToC(errors.QError.StructSizeMismatch);
 
-    const solver_enum = solverCodeFromInt(solver) orelse return errorToC(error.ParameterError);
+    const solver_enum = solverCodeFromInt(solver) orelse return errorToC(errors.QError.ParameterError);
 
     if (solver_enum == bridge.Solver.enet_path) {
         return errorToC(error.WrongAPICall);
     }
 
-    const out_coeffs = out.out_coeffs orelse return errorToC(error.ParameterError);
+    const out_coeffs = out.out_coeffs orelse return errorToC(errors.QError.ParameterError);
 
     const fit_opts = bridge.FitOptions{
         .alpha = opts.alpha,
@@ -155,26 +123,25 @@ export fn quarrel_fit_path(
     opts: *const CFitOptions,
     out: *CPathResult,
 ) callconv(.c) c_int {
-    if (opts.struct_size != @sizeOf(CFitOptions)) return errorToC(error.StructSizeMismatch);
+    if (opts.struct_size != @sizeOf(CFitOptions)) return errorToC(errors.QError.StructSizeMismatch);
 
-    const solver_enum = solverCodeFromInt(solver) orelse return errorToC(error.ParameterError);
+    const solver_enum = solverCodeFromInt(solver) orelse return errorToC(errors.QError.ParameterError);
 
     if (solver_enum != bridge.Solver.enet_path) {
-        return errorToC(error.WrongAPICall);
+        return errorToC(errors.QError.WrongAPICall);
     }
 
-    const out_coeffs_matrix = out.out_coeffs_matrix orelse return errorToC(error.ParameterError);
-    const lambda_paths = out.lambda_paths orelse return errorToC(error.ParameterError);
-    const n_iters = out.n_iters orelse return errorToC(error.ParameterError);
+    const out_coeffs_matrix = out.out_coeffs_matrix orelse return errorToC(errors.QError.ParameterError);
+    const lambda_paths = out.lambda_paths orelse return errorToC(errors.QError.ParameterError);
+    const n_iters = out.n_iters orelse return errorToC(errors.QError.ParameterError);
 
-    if (opts.lambda_min_ratio > 1) {
-        return errorToC(error.ParameterError);
-    }
-    if (opts.lambda_min_ratio == 0) {
-        return errorToC(error.InvalidValue);
-    }
+    const lambda_min_ratio: ?f64 =
+        if (opts.lambda_min_ratio == -1.0) null else if (opts.lambda_min_ratio <= 0 or opts.lambda_min_ratio >= 1)
+            return errorToC(error.ParameterError)
+        else
+            opts.lambda_min_ratio;
 
-    const lambda_min_ratio = if (opts.lambda_min_ratio == -1) null else opts.lambda_min_ratio;
+    const n_lambda = if (opts.n_lambda == 0) 100 else opts.n_lambda;
 
     const fit_opts = bridge.FitOptions{
         .alpha = opts.alpha,
@@ -187,7 +154,7 @@ export fn quarrel_fit_path(
         .max_iter = opts.max_iter,
 
         // path only
-        .n_lambda = opts.n_lambda,
+        .n_lambda = n_lambda,
         .lambda_min_ratio = lambda_min_ratio,
     };
 
