@@ -246,8 +246,8 @@ pub fn fit_path(
                 alloc,
                 table.columns,
                 y,
-                out.out_coeffs_matrix[1 .. p * n_lambda],
-                out.lambda_paths[1..n_lambda],
+                out.out_coeffs_matrix[0 .. p * n_lambda],
+                out.lambda_paths[0..n_lambda],
                 path_opts,
             );
         },
