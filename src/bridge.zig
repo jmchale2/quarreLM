@@ -13,6 +13,7 @@ pub const QuarrelError = arrow.ArrowError || error{
     ParameterError,
     WrongAPICall,
     StructSizeMismatch,
+    InvalidValue,
 };
 
 pub const Table = struct {
@@ -188,16 +189,76 @@ test {
     _ = &fit;
 }
 
-pub fn fit_path(solver_enum: Solver) !void {
-    _ = solver_enum;
-    // const params: FitParams = switch (solver_enum) {
-    //     .ols => return error.ParameterError,
-    //     .enet => return error.ParameterError,
-    //     .enet_path => .{ .enet_path = .{} },
-    // };
+pub fn fit_path(
+    stream_ptr: *arrow.ArrowArrayStream,
+    y_array_ptr: *arrow.ArrowArray,
+    y_schema_ptr: *arrow.ArrowSchema,
+    n_features: c_int,
+    solver_enum: Solver,
+    opts: FitOptions,
+    out: *PathResult,
+) !usize {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
 
+    const p: usize = @intCast(n_features);
+    // Extract y
+    const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
+
+    var table = try importStream(alloc, stream_ptr, p);
+    defer table.deinit();
+
+    if (y.len != table.n_rows) return error.DimensionMismatch;
+
+    var n_iters: usize = undefined;
+    switch (solver_enum) {
+        .ols => {
+            return QuarrelError.WrongAPICall;
+        },
+        .enet => {
+            return QuarrelError.WrongAPICall;
+        },
+        .enet_path => {
+            const penalty_factors = try sliceOrFill(alloc, opts.penalty_factors, p, 1.0);
+            const lower_bounds = try sliceOrFill(alloc, opts.lower_bounds, p, -std.math.inf(f64));
+            const upper_bounds = try sliceOrFill(alloc, opts.upper_bounds, p, std.math.inf(f64));
+
+            const lambda_min_ratio: f64 = opts.lambda_min_ratio orelse
+                if (table.n_rows >= p) 1e-4 else 1e-2;
+
+            const n_lambda = opts.n_lambda orelse return error.ParameterError;
+
+            //TODO: Handle Warm Starts here!
+
+            const path_opts: regression.PathOptions = .{
+                .alpha = opts.alpha,
+                .penalty_factors = penalty_factors,
+                .lower_bounds = lower_bounds,
+                .upper_bounds = upper_bounds,
+                .n_lambda = n_lambda,
+                .lambda_min_ratio = lambda_min_ratio,
+                .max_iter = opts.max_iter,
+                .tol = opts.tol,
+            };
+
+            n_iters = try regression.elasticNetPath(
+                alloc,
+                table.columns,
+                y,
+                out.out_coeffs_matrix[1 .. p * n_lambda],
+                out.lambda_paths[1..n_lambda],
+                path_opts,
+            );
+        },
+    }
+
+    return n_iters;
 }
 
+test {
+    _ = &fit_path;
+}
 //===========================================
 //Individual Fit Calls
 //===========================================

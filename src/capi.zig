@@ -32,6 +32,7 @@ pub const ErrorCode = enum(c_int) {
     ParameterError = -13,
     StructSizeMismatch = -14,
     WrongAPICall = -15,
+    InvalidValue = -16,
     Unknown = -99,
 };
 
@@ -113,7 +114,7 @@ export fn quarrel_fit(
     const solver_enum = solverCodeFromInt(solver) orelse return errorToC(error.ParameterError);
 
     if (solver_enum == bridge.Solver.enet_path) {
-        return errorToC(error.ParameterError);
+        return errorToC(error.WrongAPICall);
     }
 
     const out_coeffs = out.out_coeffs orelse return errorToC(error.ParameterError);
@@ -142,7 +143,6 @@ export fn quarrel_fit(
         return errorToC(err);
     };
 
-    out.n_iter = fit_out.n_iter;
     return @intCast(return_code);
 }
 
@@ -150,17 +150,57 @@ export fn quarrel_fit_path(
     stream: *arrow.ArrowArrayStream,
     y: *arrow.ArrowArray,
     y_schema: *arrow.ArrowSchema,
+    n_features: c_int,
     solver: c_int,
     opts: *const CFitOptions,
     out: *CPathResult,
 ) callconv(.c) c_int {
     if (opts.struct_size != @sizeOf(CFitOptions)) return errorToC(error.StructSizeMismatch);
-    _ = stream;
-    _ = y;
-    _ = y_schema;
-    _ = out;
-    _ = solver;
-    return 0;
+
+    const solver_enum = solverCodeFromInt(solver) orelse return errorToC(error.ParameterError);
+
+    if (solver_enum != bridge.Solver.enet_path) {
+        return errorToC(error.WrongAPICall);
+    }
+
+    const out_coeffs_matrix = out.out_coeffs_matrix orelse return errorToC(error.ParameterError);
+    const lambda_paths = out.lambda_paths orelse return errorToC(error.ParameterError);
+    const n_iters = out.n_iters orelse return errorToC(error.ParameterError);
+
+    if (opts.lambda_min_ratio > 1) {
+        return errorToC(error.ParameterError);
+    }
+    if (opts.lambda_min_ratio == 0) {
+        return errorToC(error.InvalidValue);
+    }
+
+    const lambda_min_ratio = if (opts.lambda_min_ratio == -1) null else opts.lambda_min_ratio;
+
+    const fit_opts = bridge.FitOptions{
+        .alpha = opts.alpha,
+        .lambda = opts.lambda,
+        .penalty_factors = opts.penalty_factors,
+        .lower_bounds = opts.lower_bounds,
+        .upper_bounds = opts.upper_bounds,
+        .warm_start = opts.warm_start,
+        .tol = opts.tol,
+        .max_iter = opts.max_iter,
+
+        // path only
+        .n_lambda = opts.n_lambda,
+        .lambda_min_ratio = lambda_min_ratio,
+    };
+
+    var path_out = bridge.PathResult{
+        .out_coeffs_matrix = out_coeffs_matrix,
+        .n_iters = n_iters,
+        .lambda_paths = lambda_paths,
+    };
+
+    const return_code = bridge.fit_path(stream, y, y_schema, n_features, solver_enum, fit_opts, &path_out) catch |err| {
+        return errorToC(err);
+    };
+    return @intCast(return_code);
 }
 //==============================
 //individual fit calls
