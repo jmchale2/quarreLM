@@ -23,6 +23,7 @@ from quarrelm._params import (
     ElasticNetPathResult,
     FitOptions,
 )
+from quarrelm import errors
 
 
 _lib.quarrel_version.restype = ctypes.c_char_p
@@ -230,8 +231,21 @@ if ctypes.sizeof(_CPathResult) != _lib.quarrel_sizeof_path_result():
     )
 
 
-def _ptr(arr, keepalive: list, dtype=np.float64, ctype=ctypes.c_double):
+def _ptr(
+    arr,
+    keepalive: list,
+    expected_len: int,
+    name: str,
+    dtype=np.float64,
+    ctype=ctypes.c_double,
+):
     a = np.ascontiguousarray(arr, dtype=dtype)
+
+    if a.ndim != 1 or a.shape[0] != expected_len:
+        raise errors.DimensionError(
+            errors.ErrorCode.DimensionMismatch,
+            f"{name} has shape {a.shape}, expected ({expected_len},)",
+        )
     keepalive.append(a)  # numpy array must outlive the call
     return a.ctypes.data_as(ctypes.POINTER(ctype))
 
@@ -248,6 +262,7 @@ def _build_opts(
     lower_bounds=None,
     upper_bounds=None,
     warm_start=None,
+    n_features: int | None = None,
 ):
     opts = _CFitOptions()  # zero-initialized: all pointers start NULL
     opts.struct_size = ctypes.sizeof(_CFitOptions)
@@ -261,13 +276,30 @@ def _build_opts(
     keepalive = []
 
     if penalty_factors is not None:
-        opts.penalty_factors = _ptr(penalty_factors, keepalive)
+        opts.penalty_factors = _ptr(
+            penalty_factors, keepalive, expected_len=n_features, name="penalty_factors"
+        )
     if lower_bounds is not None:
-        opts.lower_bounds = _ptr(lower_bounds, keepalive)
+        opts.lower_bounds = _ptr(
+            lower_bounds,
+            keepalive,
+            expected_len=n_features,
+            name="lower_bounds",
+        )
     if upper_bounds is not None:
-        opts.upper_bounds = _ptr(upper_bounds, keepalive)
+        opts.upper_bounds = _ptr(
+            upper_bounds,
+            keepalive,
+            expected_len=n_features,
+            name="upper_bounds",
+        )
     if warm_start is not None:
-        opts.warm_start = _ptr(warm_start, keepalive)
+        opts.warm_start = _ptr(
+            warm_start,
+            keepalive,
+            expected_len=n_features,
+            name="warm_start",
+        )
     return opts, keepalive
 
 
@@ -278,7 +310,9 @@ def _build_fit_result(n_features: int):
 
     keepalive = []
 
-    result.out_coefs = _ptr(out_coefs, keepalive)
+    result.out_coefs = _ptr(
+        out_coefs, keepalive, expected_len=n_features, name="out_coefs"
+    )
 
     return result, out_coefs
 
@@ -292,9 +326,26 @@ def _build_path_result(n_features: int, n_lambdas: int):
 
     keepalive = []
 
-    result.out_coefs_matrix = _ptr(out_coefs, keepalive)
-    result.lambda_paths = _ptr(lambdas, keepalive)
-    result.n_iters = _ptr(n_iters, keepalive, dtype=np.uint64, ctype=ctypes.c_uint64)
+    result.out_coefs_matrix = _ptr(
+        out_coefs,
+        keepalive,
+        expected_len=n_features,
+        name="out_coefs",
+    )
+    result.lambda_paths = _ptr(
+        lambdas,
+        keepalive,
+        expected_len=n_lambdas,
+        name="lambda_paths",
+    )
+    result.n_iters = _ptr(
+        n_iters,
+        keepalive,
+        dtype=np.uint64,
+        ctype=ctypes.c_uint64,
+        expected_len=n_lambdas,
+        name="n_iters",
+    )
 
     return result, out_coefs, lambdas, n_iters
 
