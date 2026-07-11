@@ -238,10 +238,10 @@ def _ptr(arr, keepalive: list, dtype=np.float64, ctype=ctypes.c_double):
 
 def _build_opts(
     *,
-    lambda_=1e-4,
-    alpha=0.5,
-    tol=1e-10,
-    max_iter=10_000,
+    lambda_=0,
+    alpha,
+    tol,
+    max_iter,
     n_lambda=0,
     lambda_min_ratio=-1,  # -1 is treated as None in capi.zig
     penalty_factors=None,
