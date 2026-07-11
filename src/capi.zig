@@ -209,8 +209,7 @@ export fn quarrel_fit_path(
         else
             opts.lambda_min_ratio;
 
-    const n_lambda = if (opts.n_lambda == 0) 100 else opts.n_lambda;
-    if (n_lambda < 2) return fail(errors.QError.ParameterError, "n_lambda must be >= 2, received n_lambda={d}", .{n_lambda});
+    if (opts.n_lambda < 2) return fail(errors.QError.ParameterError, "n_lambda must be >= 2, received n_lambda={d}", .{opts.n_lambda});
 
     const fit_opts = bridge.FitOptions{
         .alpha = opts.alpha,
@@ -223,7 +222,7 @@ export fn quarrel_fit_path(
         .max_iter = opts.max_iter,
 
         // path only
-        .n_lambda = n_lambda,
+        .n_lambda = opts.n_lambda,
         .lambda_min_ratio = lambda_min_ratio,
     };
 

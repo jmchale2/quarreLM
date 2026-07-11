@@ -403,19 +403,19 @@ pub fn elasticNetFit(
     const n = y.len;
     const n_f: f64 = @floatFromInt(n);
 
-    if (regopts.warm_start) |w| {
-        if (w.len != p) return errors.QError.DimensionMismatch;
-        if (w.ptr != out_coefs.ptr) @memcpy(out_coefs, w);
-    } else {
-        @memset(out_coefs, 0);
-    }
-
     //check shapes
     if (out_coefs.len != p or regopts.penalty_factors.len != p) return errors.QError.DimensionMismatch;
     for (0..p) |j| {
         if (columns[j].len != n) {
             return errors.QError.DimensionMismatch;
         }
+    }
+
+    if (regopts.warm_start) |w| {
+        if (w.len != p) return errors.QError.DimensionMismatch;
+        if (w.ptr != out_coefs.ptr) @memcpy(out_coefs, w);
+    } else {
+        @memset(out_coefs, 0);
     }
 
     //residual

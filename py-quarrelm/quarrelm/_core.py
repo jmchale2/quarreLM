@@ -208,7 +208,7 @@ class _CFitResult(ctypes.Structure):
 # Asserts that fitresult sizes agree at import time.
 if ctypes.sizeof(_CFitResult) != _lib.quarrel_sizeof_fit_result():
     raise ImportError(
-        f"_CFitOptions is {ctypes.sizeof(_CFitResult)} bytes but libquarrelm expects "
+        f"_CFitResult is {ctypes.sizeof(_CFitResult)} bytes but libquarrelm expects "
         f"{_lib.quarrel_sizeof_fit_result()} — the Python mirror is out of sync with the ABI"
     )
 
@@ -225,7 +225,7 @@ class _CPathResult(ctypes.Structure):
 # Asserts that pathresult sizes agree at import time.
 if ctypes.sizeof(_CPathResult) != _lib.quarrel_sizeof_path_result():
     raise ImportError(
-        f"_CpathOptions is {ctypes.sizeof(_CPathResult)} bytes but libquarrelm expects "
+        f"_CPathResult is {ctypes.sizeof(_CPathResult)} bytes but libquarrelm expects "
         f"{_lib.quarrel_sizeof_path_result()} — the Python mirror is out of sync with the ABI"
     )
 
@@ -404,7 +404,7 @@ def quarrel_fit_path(df, target: str, solver: SOLVER, fitopts: FitOptions):
         ctypes.byref(result),
     )
 
-    raise_for_code(rc, quarrel_last_error())
+    raise_for_code(rc, quarrel_last_error(), quarrel_last_error_context())
 
     coef_matrix = out_coefs_arr.reshape(data.n_features, fitopts.n_lambda)
     coefs = {}

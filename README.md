@@ -6,7 +6,7 @@ A GLMNET  implementation written in zig. Zero-copies* appache arrow data through
 
 Come back later, it's still in the oven.
 
-
+<sup>*dataset never duplicated; ingest is zero-copy, working memory bounded</sup>
 ---
 
 
