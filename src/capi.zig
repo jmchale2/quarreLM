@@ -4,8 +4,10 @@ const bridge = @import("bridge.zig");
 const errors = @import("errors.zig");
 
 const build_options = @import("build_options");
-
+const fixtures = @import("fixtures.zig");
+//============================
 // capi  error management
+//============================
 fn errorToC(err: errors.QError) c_int {
     setLastError(err);
     return @intFromEnum(errors.errorToErrorCode(err));
@@ -37,11 +39,12 @@ fn fail(err: errors.QError, comptime fmt: []const u8, args: anytype) c_int {
     return errorToC(err);
 }
 
-// general functions
+//============================
+//general functions, mostly canaries
+//============================
 /// Array length validation. Helpful when validating arrow contracts.
 export fn quarrel_array_len(arr_ptr: *arrow.ArrowArray, arr_schema_ptr: *arrow.ArrowSchema) callconv(.c) c_int {
-    const arr = arrow.asFloat64Slice(arr_ptr, arr_schema_ptr) catch |err| {
-        std.debug.print("Error: {any}\n", .{err});
+    const arr = arrow.asFloat64Slice(arr_ptr, arr_schema_ptr) catch {
         return -1;
     };
     return @as(i32, @intCast(arr.len));
@@ -58,6 +61,21 @@ export fn quarrel_version() callconv(.c) [*:0]const u8 {
     return build_options.version ++ "\x00";
 }
 
+/// Returns the sizeof fit options struct. Can be used for runtime size validation.
+export fn quarrel_sizeof_fit_options() callconv(.c) c_int {
+    return @intCast(@sizeOf(CFitOptions));
+}
+
+/// Returns the sizeof fit result struct. Can be used for runtime size validation.
+export fn quarrel_sizeof_fit_result() callconv(.c) c_int {
+    return @intCast(@sizeOf(CFitResult));
+}
+
+/// Returns the sizeof path result struct. Can be used for runtime size validation.
+export fn quarrel_sizeof_path_result() callconv(.c) c_int {
+    return @intCast(@sizeOf(CPathResult));
+}
+
 /// ABI probe: returns how many args crossed intact. Expected: 5.
 export fn quarrel_abi_probe(_: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, n: c_int, a: f64, b: f64, c: f64, m: c_int) callconv(.c) c_int {
     errors.clearContext();
@@ -70,6 +88,9 @@ export fn quarrel_abi_probe(_: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?
     return ok;
 }
 
+//============================
+// objects
+//============================
 /// Convert Solver enum to a c_int
 fn solverToCode(solver: bridge.Solver) c_int {
     return @intFromEnum(solver);
@@ -78,8 +99,6 @@ fn solverToCode(solver: bridge.Solver) c_int {
 fn solverCodeFromInt(code: c_int) ?bridge.Solver {
     return std.enums.fromInt(bridge.Solver, code);
 }
-
-// objects
 pub const CFitOptions = extern struct {
     struct_size: u64,
     lambda: f64,
@@ -107,7 +126,9 @@ pub const CPathResult = extern struct {
     out_coeffs_matrix: ?[*]f64,
 };
 
+//============================
 // fit functions
+//============================
 export fn quarrel_fit(
     stream: *arrow.ArrowArrayStream,
     y: *arrow.ArrowArray,
@@ -247,8 +268,8 @@ test "quarrel_fit matches bridge.fit (capi plumbing)" {
         .out_coeffs = &c_out_coefs,
     };
 
-    var s1 = bridge.mock.makeStream();
-    const rc = quarrel_fit(&s1, &bridge.mock.y_array, &bridge.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &c_out);
+    var s1 = fixtures.mock.makeStream();
+    const rc = quarrel_fit(&s1, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &c_out);
     try std.testing.expect(rc > 0);
 
     // --- reference: same fit through bridge directly ---
@@ -266,8 +287,8 @@ test "quarrel_fit matches bridge.fit (capi plumbing)" {
     };
     var b_out = bridge.FitResult{ .n_iter = 0, .out_coeffs = &out_coefs };
 
-    var s2 = bridge.mock.makeStream();
-    const n_iter = try bridge.fit(&s2, &bridge.mock.y_array, &bridge.mock.y_schema, 2, .enet, bopts, &b_out);
+    var s2 = fixtures.mock.makeStream();
+    const n_iter = try bridge.fit(&s2, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, .enet, bopts, &b_out);
 
     // identical computation, not just similar results
     try std.testing.expectEqual(@as(c_int, @intCast(n_iter)), rc);
@@ -300,8 +321,8 @@ test "quarrel_fit: null pf/lb/ub produce the defaults" {
     };
     var out = CFitResult{ .struct_size = @sizeOf(CFitResult), .n_iter = 0, .out_coeffs = &coefs_explicit };
 
-    var s1 = bridge.mock.makeStream();
-    _ = quarrel_fit(&s1, &bridge.mock.y_array, &bridge.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
+    var s1 = fixtures.mock.makeStream();
+    _ = quarrel_fit(&s1, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
 
     // explicit values above ARE the documented defaults — nulls must match exactly
     copts.penalty_factors = null;
@@ -309,8 +330,8 @@ test "quarrel_fit: null pf/lb/ub produce the defaults" {
     copts.upper_bounds = null;
     out.out_coeffs = &coefs_defaulted;
 
-    var s2 = bridge.mock.makeStream();
-    _ = quarrel_fit(&s2, &bridge.mock.y_array, &bridge.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
+    var s2 = fixtures.mock.makeStream();
+    _ = quarrel_fit(&s2, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
 
     try std.testing.expectEqual(coefs_explicit[0], coefs_defaulted[0]);
     try std.testing.expectEqual(coefs_explicit[1], coefs_defaulted[1]);
@@ -333,7 +354,7 @@ test "quarrel_fit: struct_size mismatch is rejected" {
     };
     var out = CFitResult{ .struct_size = @sizeOf(CFitResult), .n_iter = 0, .out_coeffs = &coefs };
 
-    var s = bridge.mock.makeStream();
-    const rc = quarrel_fit(&s, &bridge.mock.y_array, &bridge.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
+    var s = fixtures.mock.makeStream();
+    const rc = quarrel_fit(&s, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
     try std.testing.expectEqual(@intFromEnum(errors.ErrorCode.StructSizeMismatch), rc);
 }

@@ -101,7 +101,6 @@ def quarrel_last_error_context():
     return _lib.quarrel_last_error_context().decode()
 
 
-# Conversion to fit api, and not per solver calls
 class _ArrowData:
     """Marshalled feature stream + y array for one native call.
 
@@ -190,12 +189,28 @@ class _CFitOptions(ctypes.Structure):
     ]
 
 
+# Asserts that fitoptions sizes agree at import time.
+if ctypes.sizeof(_CFitOptions) != _lib.quarrel_sizeof_fit_options():
+    raise ImportError(
+        f"_CFitOptions is {ctypes.sizeof(_CFitOptions)} bytes but libquarrelm expects "
+        f"{_lib.quarrel_sizeof_fit_options()} — the Python mirror is out of sync with the ABI"
+    )
+
+
 class _CFitResult(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint64),
         ("n_iter", ctypes.c_uint64),
         ("out_coefs", ctypes.POINTER(ctypes.c_double)),
     ]
+
+
+# Asserts that fitresult sizes agree at import time.
+if ctypes.sizeof(_CFitResult) != _lib.quarrel_sizeof_fit_result():
+    raise ImportError(
+        f"_CFitOptions is {ctypes.sizeof(_CFitResult)} bytes but libquarrelm expects "
+        f"{_lib.quarrel_sizeof_fit_result()} — the Python mirror is out of sync with the ABI"
+    )
 
 
 class _CPathResult(ctypes.Structure):
@@ -205,6 +220,14 @@ class _CPathResult(ctypes.Structure):
         ("lambda_paths", ctypes.POINTER(ctypes.c_double)),
         ("out_coefs_matrix", ctypes.POINTER(ctypes.c_double)),
     ]
+
+
+# Asserts that pathresult sizes agree at import time.
+if ctypes.sizeof(_CPathResult) != _lib.quarrel_sizeof_path_result():
+    raise ImportError(
+        f"_CpathOptions is {ctypes.sizeof(_CPathResult)} bytes but libquarrelm expects "
+        f"{_lib.quarrel_sizeof_path_result()} — the Python mirror is out of sync with the ABI"
+    )
 
 
 def _ptr(arr, keepalive: list, dtype=np.float64, ctype=ctypes.c_double):

@@ -1,5 +1,6 @@
 const std = @import("std");
 const errors = @import("errors.zig");
+const fixtures = @import("fixtures.zig");
 
 const inf = std.math.inf(f64);
 const clamp = std.math.clamp;
@@ -404,7 +405,7 @@ pub fn elasticNetFit(
 
     if (regopts.warm_start) |w| {
         if (w.len != p) return errors.QError.DimensionMismatch;
-        @memcpy(out_coefs, w);
+        if (w.ptr != out_coefs.ptr) @memcpy(out_coefs, w);
     } else {
         @memset(out_coefs, 0);
     }
@@ -559,37 +560,29 @@ test "elasticNet warm start converges faster" {
     const lb = [_]f64{ -inf, -inf };
     const ub = [_]f64{ inf, inf };
 
-    var coefs_cold = [_]f64{ 0.0, 0.0 };
     var coefs = [_]f64{ 0.0, 0.0 };
 
-    const params = EnetOptions{
-        .alpha = 0.1,
-        .lambda = 0.0,
+    const regopts = EnetOptions{
+        .alpha = 0.5,
+        .lambda = 0.01,
         .penalty_factors = &pf,
         .lower_bounds = &lb,
         .upper_bounds = &ub,
-        .warm_start = &coefs_cold,
+        .warm_start = null,
         .max_iter = 10000,
         .tol = 1e-10,
     };
 
-    const iter_cold = try elasticNetFit(alloc, &cols, &y, &coefs, params);
+    const iter_cold = try elasticNetFit(alloc, &cols, &y, &coefs, regopts);
 
-    var coefs_warm = coefs_cold;
-
-    const params_warm = EnetOptions{
-        .alpha = 0.1,
-        .lambda = 0.0,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .warm_start = &coefs_warm,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
+    var warm_seed = coefs;
     // reset coefs to prove warm start is being used
     coefs = [_]f64{ 0.0, 0.0 };
-    const iter_warm = try elasticNetFit(alloc, &cols, &y, &coefs, params_warm);
+
+    var regopts_warm = regopts;
+    regopts_warm.warm_start = &warm_seed;
+
+    const iter_warm = try elasticNetFit(alloc, &cols, &y, &coefs, regopts_warm);
 
     try std.testing.expect(iter_warm <= iter_cold);
 }

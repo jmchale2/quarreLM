@@ -58,7 +58,7 @@ pub fn asFloat64Slice(array: *ArrowArray, schema: *ArrowSchema) ArrowError![]con
     if (!std.mem.eql(u8, fmt, "g")) return ArrowError.WrongFormat;
 
     // Check for nulls — we don't handle them yet
-    if (array.null_count > 0) return ArrowError.HasNulls;
+    if (array.null_count != 0) return ArrowError.HasNulls;
 
     // Float64 arrays have 2 buffers: [0] = validity bitmap, [1] = data
     if (array.n_buffers < 2) return ArrowError.NullBuffer;

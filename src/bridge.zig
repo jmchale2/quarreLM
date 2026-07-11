@@ -3,6 +3,7 @@ const std = @import("std");
 const regression = @import("regression.zig");
 
 const errors = @import("errors.zig");
+const fixtures = @import("fixtures.zig");
 
 pub const Table = struct {
     schema: arrow.ArrowSchema,
@@ -21,6 +22,7 @@ pub const Table = struct {
 pub fn importStream(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p: usize) !Table {
     var schema: arrow.ArrowSchema = undefined;
     const schema_rc = stream.get_schema.?(stream, &schema);
+    defer if (stream.release) |rel| rel(stream);
     if (schema_rc != 0) return arrow.ArrowError.SchemaError;
 
     var batches: std.ArrayList(arrow.ArrowArray) = .empty;
@@ -407,60 +409,6 @@ pub fn elasticNetPath(
     return n_iter;
 }
 
-// mock a stream
-pub const mock = struct {
-    const n = 8;
-    var col0 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8 };
-    var col1 = [_]f64{ 8, 7, 6, 5, 4, 3, 2, 1 };
-    var yv = [_]f64{ 10, 11, 12, 13, 14, 15, 16, 17 }; // 2*x0 + x1
-
-    fn releaseSchema(s: *arrow.ArrowSchema) callconv(.c) void {
-        s.release = null;
-    }
-    fn releaseArray(a: *arrow.ArrowArray) callconv(.c) void {
-        a.release = null;
-    }
-
-    var child_schemas = [_]arrow.ArrowSchema{
-        .{ .format = "g", .name = null, .metadata = null, .flags = 0, .n_children = 0, .children = null, .dictionary = null, .release = null, .private_data = null },
-        .{ .format = "g", .name = null, .metadata = null, .flags = 0, .n_children = 0, .children = null, .dictionary = null, .release = null, .private_data = null },
-    };
-    var schema_children = [_][*c]arrow.ArrowSchema{ &child_schemas[0], &child_schemas[1] };
-
-    var bufs0 = [_]?*const anyopaque{ null, &col0 };
-    var bufs1 = [_]?*const anyopaque{ null, &col1 };
-    var child_arrays = [_]arrow.ArrowArray{
-        .{ .length = n, .null_count = 0, .offset = 0, .n_buffers = 2, .n_children = 0, .buffers = &bufs0, .children = null, .dictionary = null, .release = null, .private_data = null },
-        .{ .length = n, .null_count = 0, .offset = 0, .n_buffers = 2, .n_children = 0, .buffers = &bufs1, .children = null, .dictionary = null, .release = null, .private_data = null },
-    };
-    var batch_children = [_][*c]arrow.ArrowArray{ &child_arrays[0], &child_arrays[1] };
-
-    fn getSchema(_: *arrow.ArrowArrayStream, out: *arrow.ArrowSchema) callconv(.c) c_int {
-        out.* = .{ .format = "+s", .name = null, .metadata = null, .flags = 0, .n_children = 2, .children = &schema_children, .dictionary = null, .release = releaseSchema, .private_data = null };
-        return 0;
-    }
-
-    var served: bool = false;
-    fn getNext(_: *arrow.ArrowArrayStream, out: *arrow.ArrowArray) callconv(.c) c_int {
-        if (served) {
-            out.release = null;
-            return 0;
-        } // end of stream
-        served = true;
-        out.* = .{ .length = n, .null_count = 0, .offset = 0, .n_buffers = 0, .n_children = 2, .buffers = null, .children = &batch_children, .dictionary = null, .release = releaseArray, .private_data = null };
-        return 0;
-    }
-
-    pub fn makeStream() arrow.ArrowArrayStream {
-        served = false;
-        return .{ .get_schema = getSchema, .get_next = getNext, .get_last_error = null, .release = null, .private_data = null };
-    }
-
-    var y_bufs = [_]?*const anyopaque{ null, &yv };
-    pub var y_array = arrow.ArrowArray{ .length = n, .null_count = 0, .offset = 0, .n_buffers = 2, .n_children = 0, .buffers = &y_bufs, .children = null, .dictionary = null, .release = null, .private_data = null };
-    pub var y_schema = arrow.ArrowSchema{ .format = "g", .name = null, .metadata = null, .flags = 0, .n_children = 0, .children = null, .dictionary = null, .release = null, .private_data = null };
-};
-
 test "bridge path: alpha actually reaches the solver (lambda_max scales as 1/alpha)" {
     const inf_ = std.math.inf(f64);
     var pf = [_]f64{ 1.0, 1.0 };
@@ -470,6 +418,7 @@ test "bridge path: alpha actually reaches the solver (lambda_max scales as 1/alp
     var out_coefs: [2 * n_lambda]f64 = undefined;
     var out_lambdas: [n_lambda]f64 = undefined;
 
+    const mock = fixtures.mock;
     var s1 = mock.makeStream();
     _ = try elasticNetPath(&s1, &mock.y_array, &mock.y_schema, &pf, &lb, &ub, &out_coefs, &out_lambdas, 2, n_lambda, 1.0, 1e-4, 1e-7, 1000);
     const lmax_at_1 = out_lambdas[0];
