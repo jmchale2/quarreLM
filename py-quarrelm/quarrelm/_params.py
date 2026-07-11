@@ -54,7 +54,7 @@ class FitOptions:
     lambda_: float | None = 0.01
     alpha: float = 0.5
     n_lambda: int | None = 100
-    lambda_min_ratio: float | None = 0.1
+    lambda_min_ratio: float | None = -1
     penalty_factors: np.ndarray | None = None
     lower_bounds: np.ndarray | None = None
     upper_bounds: np.ndarray | None = None

@@ -96,7 +96,7 @@ def test_quarrel_fit_path_smoke():
         upper_bounds=None,
         warm_start=None,
     )
-    rc = quarrel_fit_path(df, "y", SOLVER.ENET_PATH, 100, fitopts)
+    rc = quarrel_fit_path(df, "y", SOLVER.ENET_PATH, fitopts)
 
 
 def test_quarrel_fit_bad_solver():

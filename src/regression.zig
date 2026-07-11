@@ -10,6 +10,7 @@ pub const EnetOptions = struct {
     penalty_factors: []const f64,
     lower_bounds: []const f64,
     upper_bounds: []const f64,
+    warm_start: ?[]const f64 = null,
     max_iter: usize = 10_000,
     tol: f64 = 1e-7,
 };
@@ -21,6 +22,7 @@ pub const PathOptions = struct {
     upper_bounds: []const f64,
     n_lambda: usize,
     lambda_min_ratio: f64, // 1e-4 if n>=p, 1e-2 if n<p
+    warm_start: ?[]const f64 = null,
     max_iter: usize = 10_000,
     tol: f64 = 1e-7,
 };
@@ -394,14 +396,21 @@ pub fn elasticNetFit(
     columns: []const []const f64,
     y: []const f64,
     out_coefs: []f64,
-    params: EnetOptions,
+    regopts: EnetOptions,
 ) !usize {
     const p = columns.len;
     const n = y.len;
     const n_f: f64 = @floatFromInt(n);
 
+    if (regopts.warm_start) |w| {
+        if (w.len != p) return errors.QError.DimensionMismatch;
+        @memcpy(out_coefs, w);
+    } else {
+        @memset(out_coefs, 0);
+    }
+
     //check shapes
-    if (out_coefs.len != p or params.penalty_factors.len != p) return errors.QError.DimensionMismatch;
+    if (out_coefs.len != p or regopts.penalty_factors.len != p) return errors.QError.DimensionMismatch;
     for (0..p) |j| {
         if (columns[j].len != n) {
             return errors.QError.DimensionMismatch;
@@ -432,7 +441,7 @@ pub fn elasticNetFit(
     const gram: ?[]f64 = null;
     const xty: ?[]f64 = null;
 
-    const total_passes = elasticNetFitInner(columns, r, out_coefs, col_norms_squared, active, gram, xty, params);
+    const total_passes = elasticNetFitInner(columns, r, out_coefs, col_norms_squared, active, gram, xty, regopts);
 
     return total_passes;
 }
@@ -551,6 +560,7 @@ test "elasticNet warm start converges faster" {
     const ub = [_]f64{ inf, inf };
 
     var coefs_cold = [_]f64{ 0.0, 0.0 };
+    var coefs = [_]f64{ 0.0, 0.0 };
 
     const params = EnetOptions{
         .alpha = 0.1,
@@ -558,14 +568,28 @@ test "elasticNet warm start converges faster" {
         .penalty_factors = &pf,
         .lower_bounds = &lb,
         .upper_bounds = &ub,
+        .warm_start = &coefs_cold,
         .max_iter = 10000,
         .tol = 1e-10,
     };
 
-    const iter_cold = try elasticNetFit(alloc, &cols, &y, &coefs_cold, params);
+    const iter_cold = try elasticNetFit(alloc, &cols, &y, &coefs, params);
 
     var coefs_warm = coefs_cold;
-    const iter_warm = try elasticNetFit(alloc, &cols, &y, &coefs_warm, params);
+
+    const params_warm = EnetOptions{
+        .alpha = 0.1,
+        .lambda = 0.0,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .warm_start = &coefs_warm,
+        .max_iter = 10000,
+        .tol = 1e-10,
+    };
+    // reset coefs to prove warm start is being used
+    coefs = [_]f64{ 0.0, 0.0 };
+    const iter_warm = try elasticNetFit(alloc, &cols, &y, &coefs, params_warm);
 
     try std.testing.expect(iter_warm <= iter_cold);
 }
@@ -777,7 +801,7 @@ fn elasticNetFitInner(
     active: []bool, // pre-allocated
     gram: ?[]const f64,
     xty: ?[]const f64,
-    params: EnetOptions,
+    regopts: EnetOptions,
 ) usize {
     const p = columns.len;
     const n = r.len;
@@ -788,9 +812,9 @@ fn elasticNetFitInner(
     var total_passes: usize = 0;
     var any_new = true;
 
-    while (any_new and total_passes < params.max_iter) {
+    while (any_new and total_passes < regopts.max_iter) {
         var max_change: f64 = 0.0;
-        while (total_passes < params.max_iter) {
+        while (total_passes < regopts.max_iter) {
             total_passes += 1;
             max_change = 0.0;
 
@@ -811,9 +835,9 @@ fn elasticNetFitInner(
                     }
                 };
 
-                const beta_new = softThreshold(rho_j, params.lambda * params.alpha * params.penalty_factors[j]) /
-                    (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
-                const beta_clamped = clamp(beta_new, params.lower_bounds[j], params.upper_bounds[j]);
+                const beta_new = softThreshold(rho_j, regopts.lambda * regopts.alpha * regopts.penalty_factors[j]) /
+                    (col_norms_squared[j] + regopts.lambda * (1.0 - regopts.alpha) * regopts.penalty_factors[j]);
+                const beta_clamped = clamp(beta_new, regopts.lower_bounds[j], regopts.upper_bounds[j]);
 
                 if (beta_clamped == 0.0) active[j] = false;
 
@@ -827,7 +851,7 @@ fn elasticNetFitInner(
                 }
                 coefs[j] = beta_clamped;
             }
-            if (max_change < params.tol) break;
+            if (max_change < regopts.tol) break;
         }
 
         any_new = false;
@@ -845,9 +869,9 @@ fn elasticNetFitInner(
                     break :blk dotProduct(columns[j], r) / n_f + col_norms_squared[j] * coefs[j];
                 }
             };
-            const beta_new = softThreshold(rho_j, params.lambda * params.alpha * params.penalty_factors[j]) /
-                (col_norms_squared[j] + params.lambda * (1.0 - params.alpha) * params.penalty_factors[j]);
-            const beta_clamped = clamp(beta_new, params.lower_bounds[j], params.upper_bounds[j]);
+            const beta_new = softThreshold(rho_j, regopts.lambda * regopts.alpha * regopts.penalty_factors[j]) /
+                (col_norms_squared[j] + regopts.lambda * (1.0 - regopts.alpha) * regopts.penalty_factors[j]);
+            const beta_clamped = clamp(beta_new, regopts.lower_bounds[j], regopts.upper_bounds[j]);
 
             if (beta_clamped != 0.0) {
                 active[j] = true;
@@ -861,7 +885,7 @@ fn elasticNetFitInner(
                 if (change > max_change) max_change = change;
             }
         }
-        if (max_change < params.tol) break;
+        if (max_change < regopts.tol) break;
     }
 
     return total_passes;
@@ -874,34 +898,40 @@ pub fn elasticNetPath(
     out_coefs_matrix: []f64, // coef j, offset at lambda k = [j*n_lambda + k]
     out_lambdas: []f64,
     out_iters: []u64,
-    params: PathOptions,
+    regopts: PathOptions,
 ) !usize {
     const p = columns.len;
     const n = y.len;
     const n_f: f64 = @floatFromInt(n);
 
     var lambda_max: f64 = 0.0;
-    const alpha_safe = @max(params.alpha, 1e-3);
+    const alpha_safe = @max(regopts.alpha, 1e-3);
 
     for (0..p) |j| {
-        if (params.penalty_factors[j] == 0.0) continue;
+        if (regopts.penalty_factors[j] == 0.0) continue;
 
-        const xty_j = @abs(dotProduct(columns[j], y)) / (n_f * alpha_safe * params.penalty_factors[j]);
+        const xty_j = @abs(dotProduct(columns[j], y)) / (n_f * alpha_safe * regopts.penalty_factors[j]);
         if (xty_j > lambda_max) lambda_max = xty_j;
     }
     if (lambda_max < 1e-10) return errors.QError.DegenerateData;
 
     const log_lambda_max = @log(lambda_max);
-    const log_lambda_min = @log(lambda_max * params.lambda_min_ratio);
-    for (0..params.n_lambda) |k| {
+    const log_lambda_min = @log(lambda_max * regopts.lambda_min_ratio);
+    for (0..regopts.n_lambda) |k| {
         const k_f: f64 = @floatFromInt(k);
-        const n_f2: f64 = @floatFromInt(params.n_lambda - 1);
+        const n_f2: f64 = @floatFromInt(regopts.n_lambda - 1);
         out_lambdas[k] = @exp(log_lambda_max + k_f * (log_lambda_min - log_lambda_max) / n_f2);
     }
 
     //path loop, warm starts
     const coefs = try alloc.alloc(f64, p);
-    @memset(coefs, 0.0);
+
+    if (regopts.warm_start) |w| {
+        if (w.len != p) return error.DimensionMismatch;
+        @memcpy(coefs, w);
+    } else {
+        @memset(coefs, 0);
+    }
 
     // Precompute
     const col_norms_squared = try alloc.alloc(f64, p);
@@ -936,7 +966,7 @@ pub fn elasticNetPath(
     const active = try alloc.alloc(bool, p);
 
     var total_iters: usize = 0;
-    for (0..params.n_lambda) |k| {
+    for (0..regopts.n_lambda) |k| {
         // Initialize active from current warm start
         for (0..p) |j| {
             active[j] = coefs[j] != 0.0;
@@ -944,19 +974,19 @@ pub fn elasticNetPath(
 
         const iters = elasticNetFitInner(columns, r, coefs, col_norms_squared, active, gram, xty, .{
             .lambda = out_lambdas[k],
-            .alpha = params.alpha,
-            .penalty_factors = params.penalty_factors,
-            .lower_bounds = params.lower_bounds,
-            .upper_bounds = params.upper_bounds,
-            .max_iter = params.max_iter,
-            .tol = params.tol,
+            .alpha = regopts.alpha,
+            .penalty_factors = regopts.penalty_factors,
+            .lower_bounds = regopts.lower_bounds,
+            .upper_bounds = regopts.upper_bounds,
+            .max_iter = regopts.max_iter,
+            .tol = regopts.tol,
         });
         out_iters[k] = iters;
 
         total_iters += iters;
 
         for (0..p) |j| {
-            out_coefs_matrix[j * params.n_lambda + k] = coefs[j];
+            out_coefs_matrix[j * regopts.n_lambda + k] = coefs[j];
         }
     }
     return total_iters;

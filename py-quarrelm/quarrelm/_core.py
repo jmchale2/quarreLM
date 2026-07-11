@@ -281,7 +281,7 @@ _lib.quarrel_fit.argtypes = [
     ctypes.c_void_p,
     ctypes.c_void_p,
     ctypes.c_void_p,  # stream, y_array, y_schema
-    ctypes.c_void_p,  # n_features
+    ctypes.c_int,  # n_features
     ctypes.c_int,  # solver
     ctypes.POINTER(_CFitOptions),
     ctypes.POINTER(_CFitResult),
@@ -290,7 +290,17 @@ _lib.quarrel_fit.argtypes = [
 
 def quarrel_fit(df, target: str, solver: SOLVER, fitopts: FitOptions):
     data = _ArrowData.from_frame(df, target)
-    opts, _keep_o = _build_opts(**asdict(fitopts))
+    opts, _keep_o = _build_opts(
+        lambda_=fitopts.lambda_,
+        alpha=fitopts.alpha,
+        tol=fitopts.tol,
+        max_iter=fitopts.max_iter,
+        penalty_factors=fitopts.penalty_factors,
+        lower_bounds=fitopts.lower_bounds,
+        upper_bounds=fitopts.upper_bounds,
+        warm_start=fitopts.warm_start,
+    )
+
     result, out_coefs = _build_fit_result(data.n_features)
     rc = _lib.quarrel_fit(
         data.stream_ptr,
@@ -319,9 +329,9 @@ def quarrel_fit(df, target: str, solver: SOLVER, fitopts: FitOptions):
                 },
                 feature_names=data.feature_names,
                 coef_array=out_coefs,
-                penalty_factors=opts.penalty_factors,
-                lower_bounds=opts.lower_bounds,
-                upper_bounds=opts.upper_bounds,
+                penalty_factors=fitopts.penalty_factors,
+                lower_bounds=fitopts.lower_bounds,
+                upper_bounds=fitopts.upper_bounds,
                 alpha=fitopts.alpha,
                 lambda_=fitopts.lambda_,
                 n_iter=rc,
@@ -335,24 +345,30 @@ _lib.quarrel_fit_path.argtypes = [
     ctypes.c_void_p,
     ctypes.c_void_p,
     ctypes.c_void_p,  # stream, y_array, y_schema
-    ctypes.c_void_p,  # n_features
+    ctypes.c_int,  # n_features
     ctypes.c_int,  # solver
     ctypes.POINTER(_CFitOptions),
     ctypes.POINTER(_CPathResult),
 ]
 
 
-def quarrel_fit_path(
-    df, target: str, solver: SOLVER, n_lambda: int, fitopts: FitOptions
-):
+def quarrel_fit_path(df, target: str, solver: SOLVER, fitopts: FitOptions):
     data = _ArrowData.from_frame(df, target)
-    n_lambda = fitopts.n_lambda
-    if n_lambda is None:
-        n_lambda = 100
 
-    opts, _keep_o = _build_opts(**asdict(fitopts))
+    opts, _keep_o = _build_opts(
+        lambda_=fitopts.lambda_,
+        alpha=fitopts.alpha,
+        tol=fitopts.tol,
+        max_iter=fitopts.max_iter,
+        penalty_factors=fitopts.penalty_factors,
+        lower_bounds=fitopts.lower_bounds,
+        upper_bounds=fitopts.upper_bounds,
+        warm_start=fitopts.warm_start,
+        n_lambda=fitopts.n_lambda,
+        lambda_min_ratio=fitopts.lambda_min_ratio,
+    )
     result, out_coefs_arr, lambdas, n_iters = _build_path_result(
-        data.n_features, n_lambda
+        data.n_features, fitopts.n_lambda
     )
 
     rc = _lib.quarrel_fit_path(
@@ -367,7 +383,7 @@ def quarrel_fit_path(
 
     raise_for_code(rc, quarrel_last_error())
 
-    coef_matrix = out_coefs_arr.reshape(data.n_features, n_lambda)
+    coef_matrix = out_coefs_arr.reshape(data.n_features, fitopts.n_lambda)
     coefs = {}
     for feature in range(len(data.feature_names)):
         coefs[data.feature_names[feature]] = coef_matrix[feature, :]
@@ -375,12 +391,12 @@ def quarrel_fit_path(
     result = ElasticNetPathResult(
         coefficients=coefs,
         feature_names=data.feature_names,
-        penalty_factors=opts.penalty_factors,
-        lower_bounds=opts.lower_bounds,
-        upper_bounds=opts.upper_bounds,
+        penalty_factors=fitopts.penalty_factors,
+        lower_bounds=fitopts.lower_bounds,
+        upper_bounds=fitopts.upper_bounds,
         coef_matrix=coef_matrix,
         lambda_=lambdas,
-        alpha=opts.alpha,
+        alpha=fitopts.alpha,
         n_iters=n_iters,
         total_iters=rc,
     )

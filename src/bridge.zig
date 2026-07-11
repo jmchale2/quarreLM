@@ -153,14 +153,13 @@ pub fn fit(
             const lower_bounds = try sliceOrFill(alloc, opts.lower_bounds, p, -std.math.inf(f64));
             const upper_bounds = try sliceOrFill(alloc, opts.upper_bounds, p, std.math.inf(f64));
 
-            //TODO: Handle Warm Starts here!
-
             const enet_opts: regression.EnetOptions = .{
                 .lambda = opts.lambda,
                 .alpha = opts.alpha,
                 .penalty_factors = penalty_factors,
                 .lower_bounds = lower_bounds,
                 .upper_bounds = upper_bounds,
+                .warm_start = if (opts.warm_start) |w| w[0..p] else null,
                 .max_iter = opts.max_iter,
                 .tol = opts.tol,
             };
@@ -217,8 +216,6 @@ pub fn fit_path(
 
             const n_lambda = opts.n_lambda orelse return errors.QError.ParameterError;
 
-            //TODO: Handle Warm Starts here!
-
             const path_opts: regression.PathOptions = .{
                 .alpha = opts.alpha,
                 .penalty_factors = penalty_factors,
@@ -226,11 +223,10 @@ pub fn fit_path(
                 .upper_bounds = upper_bounds,
                 .n_lambda = n_lambda,
                 .lambda_min_ratio = lambda_min_ratio,
+                .warm_start = if (opts.warm_start) |w| w[0..p] else null,
                 .max_iter = opts.max_iter,
                 .tol = opts.tol,
             };
-
-            //TODO: Handle out iters!
 
             total_iters = try regression.elasticNetPath(
                 alloc,

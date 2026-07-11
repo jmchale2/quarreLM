@@ -1,8 +1,5 @@
-from numpy._core import ndarray
-
 from quarrelm._core import quarrel_fit, quarrel_fit_path, SOLVER
 from quarrelm._params import FitOptions, OLSResult, ElasticNetResult
-from dataclasses import dataclass
 
 import numpy as np
 from narwhals.typing import IntoDataFrame
@@ -70,7 +67,7 @@ def enet_path(
         upper_bounds=upper_bounds,
     )
 
-    results = quarrel_fit_path(df, target, solver, n_lambda, fitopts)
+    results = quarrel_fit_path(df, target, solver, fitopts)
 
     return {
         "coef_matrix": results.coef_matrix,
