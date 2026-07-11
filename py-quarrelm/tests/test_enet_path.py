@@ -6,7 +6,7 @@ from sklearn.linear_model import ElasticNet, Lasso
 import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parents[1]))
-from quarrelm._core import enet_path, enet
+from quarrelm.api import enet_path, enet
 
 
 def test_path_lambdas_decreasing():

@@ -1,13 +1,15 @@
 # tests/test_core.py — FFI boundary tests: do parameters and data actually
 # cross the ctypes/C-ABI boundary intact? Math correctness lives in test_enet.py.
 import ctypes
-
+import pytest
 import numpy as np
 import polars as pl
 
 import sys
 
+
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parents[1]))
+from quarrelm import errors
 from quarrelm._core import (
     _lib,
     enet,
@@ -17,6 +19,7 @@ from quarrelm._core import (
     quarrel_error_name,
     quarrel_last_error,
 )
+from quarrelm._params import FitOptions
 from quarrelm.errors import ErrorCode
 
 
@@ -67,16 +70,51 @@ def test_alpha_reaches_solver():
 
 def test_quarrel_fit_smoke():
     df = _small_df()
-    rc = quarrel_fit(df, "y", SOLVER.ENET)
-
-    assert rc == 0
+    fitopts = FitOptions(
+        lambda_=0.01,
+        alpha=0.5,
+        n_lambda=100,
+        lambda_min_ratio=0.1,
+        penalty_factors=None,
+        lower_bounds=None,
+        upper_bounds=None,
+        warm_start=None,
+    )
+    rc = quarrel_fit(df, "y", SOLVER.ENET, fitopts)
 
 
 def test_quarrel_fit_path_smoke():
     df = _small_df()
-    rc = quarrel_fit_path(df, "y", SOLVER.ENET, 100)
 
-    assert rc == 0
+    fitopts = FitOptions(
+        lambda_=0.01,
+        alpha=0.5,
+        n_lambda=100,
+        lambda_min_ratio=0.1,
+        penalty_factors=None,
+        lower_bounds=None,
+        upper_bounds=None,
+        warm_start=None,
+    )
+    rc = quarrel_fit_path(df, "y", SOLVER.ENET_PATH, 100, fitopts)
+
+
+def test_quarrel_fit_bad_solver():
+    df = _small_df()
+
+    fitopts = FitOptions(
+        lambda_=0.01,
+        alpha=0.5,
+        n_lambda=100,
+        lambda_min_ratio=0.1,
+        penalty_factors=None,
+        lower_bounds=None,
+        upper_bounds=None,
+        warm_start=None,
+    )
+
+    with pytest.raises(errors.QuarrelError) as exc_info:
+        rc = quarrel_fit(df, "y", 99, fitopts)  # type: ignore
 
 
 def test_error_codes_match_zig():

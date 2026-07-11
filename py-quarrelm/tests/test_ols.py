@@ -7,7 +7,8 @@ from sklearn.linear_model import LinearRegression
 import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parents[1]))
-from quarrelm._core import ols, ols_simd, ping
+from quarrelm._core import ols_simd, ping
+from quarrelm.api import ols
 
 
 def test_ping():

@@ -166,6 +166,7 @@ pub fn fit(
             };
 
             n_iters = try regression.elasticNetFit(alloc, table.columns, y, out.out_coeffs[0..p], enet_opts);
+            out.n_iter = n_iters;
         },
         .enet_path => return errors.QError.ParameterError,
     }
@@ -199,7 +200,7 @@ pub fn fit_path(
 
     if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
 
-    var n_iters: usize = undefined;
+    var total_iters: usize = undefined;
     switch (solver_enum) {
         .ols => {
             return errors.QError.WrongAPICall;
@@ -231,7 +232,7 @@ pub fn fit_path(
 
             //TODO: Handle out iters!
 
-            n_iters = try regression.elasticNetPath(
+            total_iters = try regression.elasticNetPath(
                 alloc,
                 table.columns,
                 y,
@@ -243,7 +244,7 @@ pub fn fit_path(
         },
     }
 
-    return n_iters;
+    return total_iters;
 }
 
 test {

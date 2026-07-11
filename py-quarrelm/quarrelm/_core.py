@@ -1,10 +1,14 @@
+from quarrelm.libpath import _lib, _verify_lib  # isort: skip
+
+_verify_lib(_lib)
+
 from pathlib import Path
 import ctypes
 from quarrelm.errors import raise_for_code
 
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Any
 from enum import IntEnum
 
@@ -13,35 +17,12 @@ import numpy as np
 from numpy.typing import NDArray
 import pyarrow as pa
 
-
-def _lib_suffix() -> str:
-    if sys.platform == "darwin":
-        return ".dylib"
-    elif sys.platform == "win32":
-        return ".dll"
-    else:
-        return ".so"
-
-
-def _find_lib() -> ctypes.CDLL:
-    lib_suffix = _lib_suffix()
-    libpath = Path(__file__).parents[2].resolve()
-
-    candidates = [
-        (libpath / f"zig-out/lib/libquarrelm{lib_suffix}"),
-        (libpath / f"libquarrelm{lib_suffix}"),
-    ]
-
-    for path in candidates:
-        if path.exists():
-            return ctypes.CDLL(str(path))
-
-    raise FileNotFoundError(
-        f"Could not find libquarreLM.\nSearched: {[str(p) for p in candidates]}"
-    )
-
-
-_lib = _find_lib()
+from quarrelm._params import (
+    OLSResult,
+    ElasticNetResult,
+    ElasticNetPathResult,
+    FitOptions,
+)
 
 
 _lib.quarrel_version.restype = ctypes.c_char_p
@@ -110,7 +91,14 @@ _lib.quarrel_last_error.restype = ctypes.c_char_p
 
 
 def quarrel_last_error():
-    return _lib.quarrel_last_error()
+    return _lib.quarrel_last_error().decode()
+
+
+_lib.quarrel_last_error_context.restype = ctypes.c_char_p
+
+
+def quarrel_last_error_context():
+    return _lib.quarrel_last_error_context().decode()
 
 
 # Conversion to fit api, and not per solver calls
@@ -119,17 +107,28 @@ class _ArrowData:
 
     The pointers are only valid while this object is alive."""
 
+    feature_names: list[str]
+    n_features: int
+    stream_ptr: int
+    y_array_ptr: int
+    y_schema_ptr: int
+    _stream_capsule: object
+    _y_pa: object
+    _y_schema_capsule: object
+    _y_array_capsule: object
+
     @classmethod
     def from_frame(cls, df, target: str):
+        self = cls.__new__(cls)
         nw_df = nw.from_native(df)
-        cls.feature_names = [c for c in nw_df.columns if c != target]
-        cls.n_features = len(cls.feature_names)
-        if cls.n_features == 0:
+        self.feature_names = [c for c in nw_df.columns if c != target]
+        self.n_features = len(self.feature_names)
+        if self.n_features == 0:
             raise ValueError("No feature columns found")
 
         # --- features -> Arrow C stream ---
         features_df = nw_df.select(
-            *[nw.col(f).cast(nw.Float64) for f in cls.feature_names]
+            *[nw.col(f).cast(nw.Float64) for f in self.feature_names]
         )
         features_arrow = features_df.to_native()
         if hasattr(features_arrow, "__arrow_c_stream__"):
@@ -140,7 +139,7 @@ class _ArrowData:
                 if hasattr(features_arrow, "dtypes")
                 else pa.table(features_arrow)
             )
-        cls.stream_ptr, cls._stream_capsule = _extract_stream_pointer(features_pa)
+        self.stream_ptr, self._stream_capsule = _extract_stream_pointer(features_pa)
 
         # --- y -> Arrow C array ---
         y_series = nw_df.get_column(target).cast(nw.Float64)
@@ -155,14 +154,14 @@ class _ArrowData:
             y_pa = y_native.combine_chunks()
         else:
             y_pa = pa.array(y_native, type=pa.float64())
-        cls._y_pa = y_pa  # free insurance alongside the capsules
+        self._y_pa = y_pa  # free insurance alongside the capsules
         (
-            cls.y_array_ptr,
-            cls.y_schema_ptr,
-            cls._y_schema_capsule,
-            cls._y_array_capsule,
+            self.y_array_ptr,
+            self.y_schema_ptr,
+            self._y_schema_capsule,
+            self._y_array_capsule,
         ) = _extract_array_pointers(y_pa)
-        return cls
+        return self
 
     # @classmethod
     # def from_xy(cls, X, y):
@@ -221,7 +220,7 @@ def _build_opts(
     tol=1e-10,
     max_iter=10_000,
     n_lambda=0,
-    lambda_min_ratio=0.0,
+    lambda_min_ratio=-1,  # -1 is treated as None in capi.zig
     penalty_factors=None,
     lower_bounds=None,
     upper_bounds=None,
@@ -282,31 +281,53 @@ _lib.quarrel_fit.argtypes = [
     ctypes.c_void_p,
     ctypes.c_void_p,
     ctypes.c_void_p,  # stream, y_array, y_schema
+    ctypes.c_void_p,  # n_features
     ctypes.c_int,  # solver
     ctypes.POINTER(_CFitOptions),
     ctypes.POINTER(_CFitResult),
 ]
 
 
-def quarrel_fit(df, target: str, solver: SOLVER, warm_start: NDArray | None = None):
+def quarrel_fit(df, target: str, solver: SOLVER, fitopts: FitOptions):
     data = _ArrowData.from_frame(df, target)
-    opts, _keep_o = _build_opts(
-        lambda_=0.05, alpha=1.0, tol=1e-8, max_iter=10_000, warm_start=warm_start
-    )
+    opts, _keep_o = _build_opts(**asdict(fitopts))
     result, out_coefs = _build_fit_result(data.n_features)
     rc = _lib.quarrel_fit(
         data.stream_ptr,
         data.y_array_ptr,
         data.y_schema_ptr,
+        data.n_features,
         ctypes.c_int(solver),
         ctypes.byref(opts),
         ctypes.byref(result),
     )
 
-    raise_for_code(rc, _lib.quarrel_last_error().decode())
+    raise_for_code(rc, quarrel_last_error(), quarrel_last_error_context())
+    match solver:
+        case SOLVER.OLS:
+            result = OLSResult(
+                coefficients={
+                    f: c for f, c in zip(data.feature_names, out_coefs.ravel())
+                },
+                feature_names=data.feature_names,
+                coef_array=out_coefs,
+            )
+        case SOLVER.ENET:
+            result = ElasticNetResult(
+                coefficients={
+                    f: c for f, c in zip(data.feature_names, out_coefs.ravel())
+                },
+                feature_names=data.feature_names,
+                coef_array=out_coefs,
+                penalty_factors=opts.penalty_factors,
+                lower_bounds=opts.lower_bounds,
+                upper_bounds=opts.upper_bounds,
+                alpha=fitopts.alpha,
+                lambda_=fitopts.lambda_,
+                n_iter=rc,
+            )
 
-    # TODO: convert result into a dataclass, based on solver
-    return rc
+    return result
 
 
 _lib.quarrel_fit_path.restype = ctypes.c_int
@@ -314,6 +335,7 @@ _lib.quarrel_fit_path.argtypes = [
     ctypes.c_void_p,
     ctypes.c_void_p,
     ctypes.c_void_p,  # stream, y_array, y_schema
+    ctypes.c_void_p,  # n_features
     ctypes.c_int,  # solver
     ctypes.POINTER(_CFitOptions),
     ctypes.POINTER(_CPathResult),
@@ -321,46 +343,60 @@ _lib.quarrel_fit_path.argtypes = [
 
 
 def quarrel_fit_path(
-    df, target: str, solver: SOLVER, n_lambda: int, warm_start: NDArray | None = None
+    df, target: str, solver: SOLVER, n_lambda: int, fitopts: FitOptions
 ):
     data = _ArrowData.from_frame(df, target)
+    n_lambda = fitopts.n_lambda
+    if n_lambda is None:
+        n_lambda = 100
 
-    opts, _keep_o = _build_opts(
-        lambda_=0.01,
-        alpha=1.0,
-        n_lambda=n_lambda,
-        tol=1e-8,
-        max_iter=10_000,
-        warm_start=warm_start,
-    )
+    opts, _keep_o = _build_opts(**asdict(fitopts))
     result, out_coefs_arr, lambdas, n_iters = _build_path_result(
         data.n_features, n_lambda
     )
+
     rc = _lib.quarrel_fit_path(
         data.stream_ptr,
         data.y_array_ptr,
         data.y_schema_ptr,
+        data.n_features,
         ctypes.c_int(solver),
         ctypes.byref(opts),
         ctypes.byref(result),
     )
 
-    raise_for_code(rc, quarrel_last_error().decode())
+    raise_for_code(rc, quarrel_last_error())
 
-    # TODO: convert result into a dataclass, based on solver
-    return rc
+    coef_matrix = out_coefs_arr.reshape(data.n_features, n_lambda)
+    coefs = {}
+    for feature in range(len(data.feature_names)):
+        coefs[data.feature_names[feature]] = coef_matrix[feature, :]
+
+    result = ElasticNetPathResult(
+        coefficients=coefs,
+        feature_names=data.feature_names,
+        penalty_factors=opts.penalty_factors,
+        lower_bounds=opts.lower_bounds,
+        upper_bounds=opts.upper_bounds,
+        coef_matrix=coef_matrix,
+        lambda_=lambdas,
+        alpha=opts.alpha,
+        n_iters=n_iters,
+        total_iters=rc,
+    )
+    return result
 
 
 # Old per solver calls
 
 
-@dataclass
-class OLSResult:
-    """Result of an OLS fit."""
-
-    coefficients: dict[str, float]  # feature_name -> coefficient
-    feature_names: list[str]
-    coef_array: np.ndarray  # raw coefficient vector
+# @dataclass
+# class OLSResult:
+#     """Result of an OLS fit."""
+#
+#     coefficients: dict[str, float]  # feature_name -> coefficient
+#     feature_names: list[str]
+#     coef_array: np.ndarray  # raw coefficient vector
 
 
 _lib.quarrel_ols_fit.restype = ctypes.c_int
@@ -596,20 +632,20 @@ _lib.quarrel_enet_fit.argtypes = [
 ]
 
 
-@dataclass
-class ElasticNetResult:
-    coefficients: dict[str, float]  # original scale
-    feature_names: list[str]  # feature names at fit
-    penalty_factors: np.ndarray
-    lower_bounds: np.ndarray
-    upper_bounds: np.ndarray
-    coef_array: np.ndarray  # original scale
-    means: np.ndarray  # feature means from fit
-    sds: np.ndarray  # feature sds from fit
-    intercept: float  # recovered from unstandardization
-    lambda_: float
-    alpha: float
-    n_iter: int
+# @dataclass
+# class ElasticNetResult:
+#     coefficients: dict[str, float]  # original scale
+#     feature_names: list[str]  # feature names at fit
+#     penalty_factors: np.ndarray
+#     lower_bounds: np.ndarray
+#     upper_bounds: np.ndarray
+#     coef_array: np.ndarray  # original scale
+#     means: np.ndarray  # feature means from fit
+#     sds: np.ndarray  # feature sds from fit
+#     intercept: float  # recovered from unstandardization
+#     lambda_: float
+#     alpha: float
+#     n_iter: int
 
 
 def enet(

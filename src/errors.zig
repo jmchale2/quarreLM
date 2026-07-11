@@ -44,3 +44,14 @@ pub fn errorToErrorCode(err: QError) ErrorCode {
 pub fn errorCodeFromInt(code: c_int) ErrorCode {
     return std.enums.fromInt(ErrorCode, code);
 }
+
+pub threadlocal var context_buf: [256]u8 = undefined;
+pub threadlocal var context: [:0]const u8 = "";
+
+pub fn setContext(comptime fmt: []const u8, args: anytype) void {
+    // context = std.mem.printSentinel(&context_buf, fmt, args, 0) catch "context truncated"; // master
+    context = std.fmt.bufPrintSentinel(&context_buf, fmt, args, 0) catch "context truncated"; // 0.16.0
+}
+pub fn clearContext() void {
+    context = "";
+}

@@ -5,7 +5,7 @@ from sklearn.linear_model import ElasticNet, Lasso, Ridge
 import sys
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parents[1]))
-from quarrelm._core import enet
+from quarrelm.api import enet
 
 
 def test_enet_zero_penalty_recovers_ols():

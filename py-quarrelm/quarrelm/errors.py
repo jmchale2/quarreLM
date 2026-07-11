@@ -94,7 +94,7 @@ _EXC = {
 }
 
 
-def raise_for_code(rc: int, detail: str = "") -> None:
+def raise_for_code(rc: int, detail: str = "", context: str = "") -> None:
     """Raise the mapped exception for a negative native return code."""
     if rc >= 0:
         return
@@ -102,4 +102,7 @@ def raise_for_code(rc: int, detail: str = "") -> None:
         code = ErrorCode(rc)
     except ValueError:
         code = ErrorCode.Unknown
-    raise _EXC.get(code, InternalError)(code, detail)
+
+    raise _EXC.get(code, InternalError)(
+        code, f"{detail}\nContext:{context}" if context else detail
+    )
