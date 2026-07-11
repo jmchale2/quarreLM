@@ -127,24 +127,10 @@ pub fn olsFit(
 }
 
 test "OLS recovers known coefficients" {
-    // y = 2*x1 + 3*x2 + noise(0)
-    // With no noise, should recover exactly [2, 3]
-    const x1 = [_]f64{ 1, 2, 3, 4, 5 };
-    const x2 = [_]f64{ 2, 1, 3, 2, 4 };
-    const y = [_]f64{
-        2 * 1 + 3 * 2, // 8
-        2 * 2 + 3 * 1, // 7
-        2 * 3 + 3 * 3, // 15
-        2 * 4 + 3 * 2, // 14
-        2 * 5 + 3 * 4, // 22
-    };
-
-    const cols = [_][]const f64{ &x1, &x2 };
+    // y = 2*x1 + 3*x2, no noise: recover exactly [2, 3]
     var coefs: [2]f64 = undefined;
 
-    try olsFit(&cols, &y, &coefs);
-
-    // std.debug.print("{any}", .{coefs});
+    try olsFit(&fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs);
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);
@@ -337,24 +323,10 @@ pub fn olsFitVec(
 }
 
 test "OLSVec recovers known coefficients" {
-    // y = 2*x1 + 3*x2 + noise(0)
-    // With no noise, should recover exactly [2, 3]
-    const x1 = [_]f64{ 1, 2, 3, 4, 5 };
-    const x2 = [_]f64{ 2, 1, 3, 2, 4 };
-    const y = [_]f64{
-        2 * 1 + 3 * 2, // 8
-        2 * 2 + 3 * 1, // 7
-        2 * 3 + 3 * 3, // 15
-        2 * 4 + 3 * 2, // 14
-        2 * 5 + 3 * 4, // 22
-    };
-
-    const cols = [_][]const f64{ &x1, &x2 };
+    // y = 2*x1 + 3*x2, no noise: recover exactly [2, 3]
     var coefs: [2]f64 = undefined;
 
-    try olsFitVec(&cols, &y, &coefs);
-
-    // std.debug.print("{any}\n", .{coefs});
+    try olsFitVec(&fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs);
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);
@@ -457,31 +429,17 @@ test "elasticNet recovers known coefficients" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    const x1 = [_]f64{ 1, 2, 3, 4, 5 };
-    const x2 = [_]f64{ 2, 1, 3, 2, 4 };
-    const y = [_]f64{ 8, 7, 15, 14, 22 }; // y = 2*x1 + 3*x2
-
-    const cols = [_][]const f64{ &x1, &x2 };
     var coefs = [_]f64{ 0.0, 0.0 };
-    const pf = [_]f64{ 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf };
-    const ub = [_]f64{ inf, inf };
 
-    const params = EnetOptions{
-        .alpha = 0.0,
-        .lambda = 0.0,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
+    var regopts = fixtures.enet_defaults;
+    regopts.alpha = 0.0;
+    regopts.lambda = 0.0;
 
-    const n_iter = try elasticNetFit(alloc, &cols, &y, &coefs, params);
+    const n_iter = try elasticNetFit(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs, regopts);
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-4);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-4);
-    try std.testing.expect(n_iter <= 10000);
+    try std.testing.expect(n_iter <= regopts.max_iter);
 }
 
 test "elasticNet lasso zeros out irrelevant features" {
@@ -489,27 +447,13 @@ test "elasticNet lasso zeros out irrelevant features" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    const x2 = [_]f64{ 0.1, -0.2, 0.3, -0.1, 0.2, -0.3, 0.1, -0.2, 0.3, -0.1 };
-    const y = [_]f64{ 3, 6, 9, 12, 15, 18, 21, 24, 27, 30 };
-
-    const cols = [_][]const f64{ &x1, &x2 };
     var coefs = [_]f64{ 0.0, 0.0 };
-    const pf = [_]f64{ 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf };
-    const ub = [_]f64{ inf, inf };
 
-    const params = EnetOptions{
-        .alpha = 1.0,
-        .lambda = 0.5,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
+    var regopts = fixtures.enet_defaults;
+    regopts.alpha = 1.0;
+    regopts.lambda = 0.5;
 
-    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
+    _ = try elasticNetFit(alloc, &fixtures.sparse_2col.cols, &fixtures.sparse_2col.y, &coefs, regopts);
 
     try std.testing.expect(@abs(coefs[0]) > 1.0);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefs[1], 0.1);
@@ -520,27 +464,13 @@ test "elasticNet ridge shrinks but keeps all nonzero" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    const x2 = [_]f64{ 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
-    const y = [_]f64{ 11, 11, 11, 11, 11, 11, 11, 11, 11, 11 };
-
-    const cols = [_][]const f64{ &x1, &x2 };
     var coefs = [_]f64{ 0.0, 0.0 };
-    const pf = [_]f64{ 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf };
-    const ub = [_]f64{ inf, inf };
 
-    const params = EnetOptions{
-        .alpha = 0.001,
-        .lambda = 0.5,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
+    var regopts = fixtures.enet_defaults;
+    regopts.alpha = 0.001;
+    regopts.lambda = 0.5;
 
-    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
+    _ = try elasticNetFit(alloc, &fixtures.collinear_2col.cols, &fixtures.collinear_2col.y, &coefs, regopts);
 
     try std.testing.expect(@abs(coefs[0]) > 0.01);
     try std.testing.expect(@abs(coefs[1]) > 0.01);
@@ -556,22 +486,10 @@ test "elasticNet warm start converges faster" {
     const y = [_]f64{ 7, 7, 15, 14, 22, 21, 29, 28, 36, 35 };
 
     const cols = [_][]const f64{ &x1, &x2 };
-    const pf = [_]f64{ 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf };
-    const ub = [_]f64{ inf, inf };
-
     var coefs = [_]f64{ 0.0, 0.0 };
 
-    const regopts = EnetOptions{
-        .alpha = 0.5,
-        .lambda = 0.01,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .warm_start = null,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
+    // enet_defaults (alpha=0.5, lambda=0.01) is exactly what this test wants.
+    const regopts = fixtures.enet_defaults;
 
     const iter_cold = try elasticNetFit(alloc, &cols, &y, &coefs, regopts);
 
@@ -605,18 +523,14 @@ test "elasticNet lower bound prevents negative coefficients" {
 
     const cols = [_][]const f64{ &x1, &x2 };
     var coefs = [_]f64{ 0.0, 0.0 };
-    const pf = [_]f64{ 1.0, 1.0 };
     const lb = [_]f64{ 0.0, 0.0 };
-    const ub = [_]f64{ inf, inf };
 
-    const params = EnetOptions{
-        .alpha = 0.0,
-        .lambda = 0.0,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-    };
-    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
+    var regopts = fixtures.enet_defaults;
+    regopts.alpha = 0.0;
+    regopts.lambda = 0.0;
+    regopts.lower_bounds = &lb;
+
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs, regopts);
 
     try std.testing.expect(coefs[0] >= 0.0);
     try std.testing.expect(coefs[1] >= 0.0);
@@ -637,19 +551,16 @@ test "elasticNet upper bound caps coefficients" {
 
     const cols = [_][]const f64{&x1};
     var coefs = [_]f64{0.0};
-    const pf = [_]f64{1.0};
-    const lb = [_]f64{-inf};
     const ub = [_]f64{2.0};
 
-    const params = EnetOptions{
-        .alpha = 0.0,
-        .lambda = 0.0,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-    };
+    var regopts = fixtures.enet_defaults;
+    regopts.alpha = 0.0;
+    regopts.lambda = 0.0;
+    regopts.penalty_factors = &fixtures.pf_ones_1;
+    regopts.lower_bounds = &fixtures.lb_open_1;
+    regopts.upper_bounds = &ub;
 
-    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
+    _ = try elasticNetFit(alloc, &cols, &y, &coefs, regopts);
 
     // Should be clamped at 2.0
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
@@ -661,44 +572,22 @@ test "elasticNet penalty factor zero forces variable in" {
     const alloc = arena.allocator();
 
     // With penalty_factor=0, variable is unpenalized (always enters)
-    const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    const x2 = [_]f64{ 0.1, -0.2, 0.3, -0.1, 0.2, -0.3, 0.1, -0.2, 0.3, -0.1 };
-    const y = [_]f64{ 3, 6, 9, 12, 15, 18, 21, 24, 27, 30 };
-
-    const cols = [_][]const f64{ &x1, &x2 };
-    const pf = [_]f64{ 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf };
-    const ub = [_]f64{ inf, inf };
-
-    const params = EnetOptions{
-        .alpha = 1.0,
-        .lambda = 1.0,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
+    var regopts = fixtures.enet_defaults;
+    regopts.alpha = 1.0;
+    regopts.lambda = 1.0;
 
     // High lambda with equal penalty ->  x2 should be zeroed
     var coefs_penalized = [_]f64{ 0.0, 0.0 };
-    _ = try elasticNetFit(alloc, &cols, &y, &coefs_penalized, params);
+    _ = try elasticNetFit(alloc, &fixtures.sparse_2col.cols, &fixtures.sparse_2col.y, &coefs_penalized, regopts);
 
     // Now with penalty_factor=0 on x2 -> should be nonzero even at high lambda
     const pf_forced = [_]f64{ 1.0, 0.0 };
     var coefs_forced = [_]f64{ 0.0, 0.0 };
 
-    const params_forced = EnetOptions{
-        .alpha = 1.0,
-        .lambda = 1.0,
-        .penalty_factors = &pf_forced,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
+    var regopts_forced = regopts;
+    regopts_forced.penalty_factors = &pf_forced;
 
-    _ = try elasticNetFit(alloc, &cols, &y, &coefs_forced, params_forced);
+    _ = try elasticNetFit(alloc, &fixtures.sparse_2col.cols, &fixtures.sparse_2col.y, &coefs_forced, regopts_forced);
 
     // x2 was zero with penalty, should be nonzero without
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), coefs_penalized[1], 0.01);
@@ -710,45 +599,22 @@ test "elasticNet high penalty factor increases shrinkage" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    const x2 = [_]f64{ 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
-    // y = 1*x1 + 1*x2
-    const y = [_]f64{ 11, 11, 11, 11, 11, 11, 11, 11, 11, 11 };
+    var regopts = fixtures.enet_defaults;
+    regopts.alpha = 1.0;
+    regopts.lambda = 0.1;
 
-    const cols = [_][]const f64{ &x1, &x2 };
-    const lb = [_]f64{ -inf, -inf };
-    const ub = [_]f64{ inf, inf };
-
-    // Equal penalty
-    const pf_equal = [_]f64{ 1.0, 1.0 };
+    // Equal penalty (enet_defaults.penalty_factors is all ones)
     var coefs_equal = [_]f64{ 0.0, 0.0 };
-    const params_equal = EnetOptions{
-        .alpha = 1.0,
-        .lambda = 0.1,
-        .penalty_factors = &pf_equal,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
-
-    _ = try elasticNetFit(alloc, &cols, &y, &coefs_equal, params_equal);
+    _ = try elasticNetFit(alloc, &fixtures.collinear_2col.cols, &fixtures.collinear_2col.y, &coefs_equal, regopts);
 
     // Heavy penalty on x2
     const pf_heavy = [_]f64{ 1.0, 5.0 };
     var coefs_heavy = [_]f64{ 0.0, 0.0 };
 
-    const params_heavy = EnetOptions{
-        .alpha = 1.0,
-        .lambda = 0.1,
-        .penalty_factors = &pf_heavy,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
+    var regopts_heavy = regopts;
+    regopts_heavy.penalty_factors = &pf_heavy;
 
-    _ = try elasticNetFit(alloc, &cols, &y, &coefs_heavy, params_heavy);
+    _ = try elasticNetFit(alloc, &fixtures.collinear_2col.cols, &fixtures.collinear_2col.y, &coefs_heavy, regopts_heavy);
 
     // x2 should be more shrunk with higher penalty factor
     try std.testing.expect(@abs(coefs_heavy[1]) < @abs(coefs_equal[1]));
@@ -759,28 +625,17 @@ test "elasticNet box constraints with regularization" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    // Combine bounds with lasso penalty
-    const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
-    const x2 = [_]f64{ 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
-    const y = [_]f64{ 11, 11, 11, 11, 11, 11, 11, 11, 11, 11 };
-
-    const cols = [_][]const f64{ &x1, &x2 };
+    // Combine bounds (alpha=0.5 lasso/ridge mix) with a box constraint.
     var coefs = [_]f64{ 0.0, 0.0 };
-    const pf = [_]f64{ 1.0, 1.0 };
     const lb = [_]f64{ 0.5, -inf }; // x1 >= 0.5
     const ub = [_]f64{ inf, 0.3 }; // x2 <= 0.3
 
-    const params = EnetOptions{
-        .alpha = 0.5,
-        .lambda = 0.1,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .max_iter = 10000,
-        .tol = 1e-10,
-    };
+    var regopts = fixtures.enet_defaults; // alpha = 0.5
+    regopts.lambda = 0.1;
+    regopts.lower_bounds = &lb;
+    regopts.upper_bounds = &ub;
 
-    _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
+    _ = try elasticNetFit(alloc, &fixtures.collinear_2col.cols, &fixtures.collinear_2col.y, &coefs, regopts);
 
     try std.testing.expect(coefs[0] >= 0.5 - 1e-10);
     try std.testing.expect(coefs[1] <= 0.3 + 1e-10);
@@ -994,41 +849,18 @@ test "elasticNetPath has positive n_iters" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    const n = 500;
+    const data = fixtures.sinCos(500).init();
+    const cols = [_][]const f64{ &data.x1, &data.x2 };
 
-    // Generate simple synthetic data: y = 2*x1 + 3*x2 +  noise
-    var x1: [n]f64 = undefined;
-    var x2: [n]f64 = undefined;
-    var y: [n]f64 = undefined;
+    // path_defaults (alpha=1, n_lambda=20, lambda_min_ratio=1e-4, tol=1e-10) fits as-is.
+    const regopts = fixtures.path_defaults;
+    const n_lambda = regopts.n_lambda;
 
-    // Simple deterministic "random" data
-    for (0..n) |i| {
-        const t: f64 = @floatFromInt(i);
-        x1[i] = @sin(t * 0.1) * 3.0 + t * 0.01;
-        x2[i] = @cos(t * 0.07) * 2.0 - t * 0.005;
-        y[i] = 2.0 * x1[i] + 3.0 * x2[i] + @sin(t * 1.7) * 0.1;
-    }
-
-    const cols = [_][]const f64{ &x1, &x2 };
-    const pf = [_]f64{ 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf };
-    const ub = [_]f64{ inf, inf };
-
-    const n_lambda = 20;
     var out_lambdas: [n_lambda]f64 = undefined;
     var out_coef_matrix: [2 * n_lambda]f64 = undefined;
     var out_iters = [_]u64{0} ** n_lambda;
 
-    _ = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, &out_iters, .{
-        .alpha = 1.0,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .n_lambda = n_lambda,
-        .lambda_min_ratio = 1e-4,
-        .tol = 1e-10,
-        // max_iter: struct default (10_000)
-    });
+    _ = try elasticNetPath(alloc, &cols, &data.y, &out_coef_matrix, &out_lambdas, &out_iters, regopts);
 
     // All fits should have a positive number if n_iters
     for (0..n_lambda) |k| {
@@ -1041,41 +873,17 @@ test "elasticNetPath produces decreasing lambda sequence" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    const n = 500;
+    const data = fixtures.sinCos(500).init();
+    const cols = [_][]const f64{ &data.x1, &data.x2 };
 
-    // Generate simple synthetic data: y = 2*x1 + 3*x2 +  noise
-    var x1: [n]f64 = undefined;
-    var x2: [n]f64 = undefined;
-    var y: [n]f64 = undefined;
+    const regopts = fixtures.path_defaults;
+    const n_lambda = regopts.n_lambda;
 
-    // Simple deterministic "random" data
-    for (0..n) |i| {
-        const t: f64 = @floatFromInt(i);
-        x1[i] = @sin(t * 0.1) * 3.0 + t * 0.01;
-        x2[i] = @cos(t * 0.07) * 2.0 - t * 0.005;
-        y[i] = 2.0 * x1[i] + 3.0 * x2[i] + @sin(t * 1.7) * 0.1;
-    }
-
-    const cols = [_][]const f64{ &x1, &x2 };
-    const pf = [_]f64{ 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf };
-    const ub = [_]f64{ inf, inf };
-
-    const n_lambda = 20;
     var out_lambdas: [n_lambda]f64 = undefined;
     var out_coef_matrix: [2 * n_lambda]f64 = undefined;
     var out_iters: [n_lambda]u64 = undefined;
 
-    _ = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, &out_iters, .{
-        .alpha = 1.0,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .n_lambda = n_lambda,
-        .lambda_min_ratio = 1e-4,
-        .tol = 1e-10,
-        // max_iter: struct default (10_000)
-    });
+    _ = try elasticNetPath(alloc, &cols, &data.y, &out_coef_matrix, &out_lambdas, &out_iters, regopts);
 
     // Lambda sequence should be strictly decreasing
     for (0..n_lambda - 1) |k| {
@@ -1102,43 +910,23 @@ test "elasticNetPath warm starts reduce total iterations" {
     defer arena.deinit();
     const alloc = arena.allocator();
 
-    const n = 500;
     const p = 3;
-
-    // Generate simple synthetic data: y = 2*x1 + 3*x2 + 0*x3 + noise
-    var x1: [n]f64 = undefined;
-    var x2: [n]f64 = undefined;
-    var x3: [n]f64 = undefined;
-    var y: [n]f64 = undefined;
-
-    // Simple deterministic "random" data
-    for (0..n) |i| {
-        const t: f64 = @floatFromInt(i);
-        x1[i] = @sin(t * 0.1) * 3.0 + t * 0.01;
-        x2[i] = @cos(t * 0.07) * 2.0 - t * 0.005;
-        x3[i] = @sin(t * 0.3) * 0.5;
-        y[i] = 2.0 * x1[i] + 3.0 * x2[i] + @sin(t * 1.7) * 0.1;
-    }
-
-    const cols = [_][]const f64{ &x1, &x2, &x3 };
-    const pf = [_]f64{ 1.0, 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf, -inf };
-    const ub = [_]f64{ inf, inf, inf };
-
     const n_lambda = 50;
+    // x3 is irrelevant here (true coef 0): y = 2*x1 + 3*x2 + noise.
+    const data = fixtures.sinCos(500).init();
+    const cols = [_][]const f64{ &data.x1, &data.x2, &data.x3 };
+
+    var regopts = fixtures.path_defaults;
+    regopts.n_lambda = n_lambda;
+    regopts.penalty_factors = &fixtures.pf_ones_3;
+    regopts.lower_bounds = &fixtures.lb_open_3;
+    regopts.upper_bounds = &fixtures.ub_open_3;
+
     var out_lambdas: [n_lambda]f64 = undefined;
     var out_coef_matrix: [p * n_lambda]f64 = undefined;
     var out_iters: [n_lambda]u64 = undefined;
 
-    const path_iters = try elasticNetPath(alloc, &cols, &y, &out_coef_matrix, &out_lambdas, &out_iters, .{
-        .alpha = 1.0,
-        .penalty_factors = &pf,
-        .lower_bounds = &lb,
-        .upper_bounds = &ub,
-        .n_lambda = n_lambda,
-        .lambda_min_ratio = 1e-4,
-        // max_iter, tol: struct defaults (10_000, 1e-7) match the old explicit values
-    });
+    const path_iters = try elasticNetPath(alloc, &cols, &data.y, &out_coef_matrix, &out_lambdas, &out_iters, regopts);
 
     const avg_iters = @as(f64, @floatFromInt(path_iters)) / @as(f64, @floatFromInt(n_lambda));
     // std.debug.print("\n  Path avg iterations per lambda: {d:.2}\n", .{avg_iters});
@@ -1214,24 +1002,22 @@ test "elasticNet solutions satisfy KKT across lambda/alpha grid" {
         y[i] = 2.0 * xs[0][i] - 1.0 * xs[1][i] + 0.3 * xs[3][i] + @sin(t * 3.1) * 0.05;
     }
     const cols = [_][]const f64{ &xs[0], &xs[1], &xs[2], &xs[3] };
-    const pf = [_]f64{ 1.0, 1.0, 1.0, 1.0 };
-    const lb = [_]f64{ -inf, -inf, -inf, -inf };
-    const ub = [_]f64{ inf, inf, inf, inf };
+
+    var base = fixtures.enet_defaults;
+    base.penalty_factors = &fixtures.pf_ones_4;
+    base.lower_bounds = &fixtures.lb_open_4;
+    base.upper_bounds = &fixtures.ub_open_4;
+    base.tol = 1e-14;
+    base.max_iter = 100_000;
 
     const lambdas = [_]f64{ 0.5, 0.1, 0.01 };
     const alphas = [_]f64{ 1.0, 0.5, 0.05 };
     for (lambdas) |lam| {
         for (alphas) |a| {
             var coefs = [_]f64{ 0, 0, 0, 0 };
-            const params = EnetOptions{
-                .lambda = lam,
-                .alpha = a,
-                .penalty_factors = &pf,
-                .lower_bounds = &lb,
-                .upper_bounds = &ub,
-                .tol = 1e-14,
-                .max_iter = 100_000,
-            };
+            var params = base;
+            params.lambda = lam;
+            params.alpha = a;
             _ = try elasticNetFit(alloc, &cols, &y, &coefs, params);
             try checkKKT(alloc, &cols, &y, &coefs, params, 1e-6);
         }

@@ -5,13 +5,22 @@ const std = @import("std");
 
 pub const inf = std.math.inf(f64);
 
-pub const pf_ones_2: [2]f64 = @splat(1.0);
-pub const lb_open_3: [3]f64 = @splat(-inf);
+// Unpenalized penalty factors and open (unconstrained) box bounds, by width.
+pub const pf_ones_1: [1]f64 = @splat(1.0);
+pub const lb_open_1: [1]f64 = @splat(-inf);
+pub const ub_open_1: [1]f64 = @splat(inf);
 
-pub const pf_ones_3: [3]f64 = @splat(1.0);
+pub const pf_ones_2: [2]f64 = @splat(1.0);
 pub const lb_open_2: [2]f64 = @splat(-inf);
 pub const ub_open_2: [2]f64 = @splat(inf);
+
+pub const pf_ones_3: [3]f64 = @splat(1.0);
+pub const lb_open_3: [3]f64 = @splat(-inf);
 pub const ub_open_3: [3]f64 = @splat(inf);
+
+pub const pf_ones_4: [4]f64 = @splat(1.0);
+pub const lb_open_4: [4]f64 = @splat(-inf);
+pub const ub_open_4: [4]f64 = @splat(inf);
 
 pub const enet_defaults = regression.EnetOptions{
     .lambda = 0.01,
@@ -39,6 +48,48 @@ pub const exact_2col = struct {
     pub const y = [_]f64{ 8, 7, 15, 14, 22 };
     pub const cols = [_][]const f64{ &x1, &x2 };
 };
+
+pub const sparse_2col = struct {
+    // y = 3*x1 exactly; x2 is small and truly irrelevant (coef 0).
+    // Drives sparsity/penalty tests: lasso should zero x2.
+    pub const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    pub const x2 = [_]f64{ 0.1, -0.2, 0.3, -0.1, 0.2, -0.3, 0.1, -0.2, 0.3, -0.1 };
+    pub const y = [_]f64{ 3, 6, 9, 12, 15, 18, 21, 24, 27, 30 };
+    pub const cols = [_][]const f64{ &x1, &x2 };
+};
+
+pub const collinear_2col = struct {
+    // x1 + x2 = 11 on every row, so y = x1 + x2 is the constant 11.
+    // Drives ridge/shrinkage and box-constraint tests.
+    pub const x1 = [_]f64{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    pub const x2 = [_]f64{ 10, 9, 8, 7, 6, 5, 4, 3, 2, 1 };
+    pub const y = [_]f64{ 11, 11, 11, 11, 11, 11, 11, 11, 11, 11 };
+    pub const cols = [_][]const f64{ &x1, &x2 };
+};
+
+/// Deterministic sin/cos regression data with n rows and up to 3 columns.
+/// y = 2*x1 + 3*x2 + small deterministic noise; x3 is irrelevant (true coef 0).
+/// Larger, path-oriented fixture — instantiate with `sinCos(n).init()`.
+pub fn sinCos(comptime n: usize) type {
+    return struct {
+        x1: [n]f64,
+        x2: [n]f64,
+        x3: [n]f64,
+        y: [n]f64,
+
+        pub fn init() @This() {
+            var self: @This() = undefined;
+            for (0..n) |i| {
+                const t: f64 = @floatFromInt(i);
+                self.x1[i] = @sin(t * 0.1) * 3.0 + t * 0.01;
+                self.x2[i] = @cos(t * 0.07) * 2.0 - t * 0.005;
+                self.x3[i] = @sin(t * 0.3) * 0.5;
+                self.y[i] = 2.0 * self.x1[i] + 3.0 * self.x2[i] + @sin(t * 1.7) * 0.1;
+            }
+            return self;
+        }
+    };
+}
 
 // mock a stream
 pub const mock = struct {
