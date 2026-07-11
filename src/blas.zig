@@ -134,8 +134,8 @@ test "gramMatrix matches manual dotProduct computation" {
     const col1 = [_]f64{ 5, 4, 3, 2, 1 };
     const col2 = [_]f64{ 1, 0, 1, 0, 1 };
 
-    // Packed column-major for BLAS: col0 ++ col1 ++ col2
-    const X = [_]f64{ 1, 2, 3, 4, 5, 5, 4, 3, 2, 1, 1, 0, 1, 0, 1 };
+    // Packed column-major for BLAS: columns end-to-end (correct by construction).
+    const X = col0 ++ col1 ++ col2;
 
     var blas_result: [9]f64 = undefined;
     gramMatrix(&X, n, p, &blas_result);
@@ -199,8 +199,8 @@ test "xty matches manual dotProduct" {
     const col2 = [_]f64{ 1, 0, 1, 0, 1 };
     const y = [_]f64{ 2, 4, 6, 8, 10 };
 
-    // Column-major for BLAS
-    const X = [_]f64{ 1, 2, 3, 4, 5, 5, 4, 3, 2, 1, 1, 0, 1, 0, 1 };
+    // Column-major for BLAS: columns end-to-end (correct by construction).
+    const X = col0 ++ col1 ++ col2;
 
     var blas_result: [3]f64 = undefined;
     xty(&X, &y, n, p, &blas_result);
