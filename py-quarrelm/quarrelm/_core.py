@@ -329,7 +329,7 @@ def _build_path_result(n_features: int, n_lambdas: int):
     result.out_coefs_matrix = _ptr(
         out_coefs,
         keepalive,
-        expected_len=n_features,
+        expected_len=n_features * n_lambdas,
         name="out_coefs",
     )
     result.lambda_paths = _ptr(
@@ -373,6 +373,7 @@ def quarrel_fit(df, target: str, solver: SOLVER, fitopts: FitOptions):
         lower_bounds=fitopts.lower_bounds,
         upper_bounds=fitopts.upper_bounds,
         warm_start=fitopts.warm_start,
+        n_features=data.n_features,
     )
 
     result, out_coefs = _build_fit_result(data.n_features)
@@ -440,6 +441,7 @@ def quarrel_fit_path(df, target: str, solver: SOLVER, fitopts: FitOptions):
         warm_start=fitopts.warm_start,
         n_lambda=fitopts.n_lambda,
         lambda_min_ratio=fitopts.lambda_min_ratio,
+        n_features=data.n_features,
     )
     result, out_coefs_arr, lambdas, n_iters = _build_path_result(
         data.n_features, fitopts.n_lambda
