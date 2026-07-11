@@ -28,6 +28,7 @@ pub const PathOptions = struct {
     tol: f64 = 1e-7,
 };
 
+/// Gaussian Elimination OLS
 pub fn olsFit(
     columns: []const []const f64,
     y: []const f64,
@@ -154,7 +155,7 @@ fn axpy(dst: []f64, src: []const f64, scalar: f64) void {
 }
 
 pub fn dotProduct(a: []const f64, b: []const f64) f64 {
-    const vec_len = 4; // AVX2: 4 × f64 = 256 bits
+    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4; // per-target lane count; fallback 4 (AVX2-ish)
     const n = a.len;
 
     // SIMD accumulator
