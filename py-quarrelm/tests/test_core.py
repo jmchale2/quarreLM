@@ -12,7 +12,6 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).parents[1]))
 from quarrelm import errors
 from quarrelm._core import (
     _lib,
-    enet,
     quarrel_fit,
     quarrel_fit_path,
     SOLVER,
@@ -21,6 +20,7 @@ from quarrelm._core import (
 )
 from quarrelm._params import FitOptions
 from quarrelm.errors import ErrorCode
+from quarrelm.api import enet
 
 
 def _small_df(n: int = 200, p: int = 3, seed: int = 0) -> pl.DataFrame:
