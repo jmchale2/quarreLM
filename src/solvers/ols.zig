@@ -155,3 +155,7 @@ test "cholesky decomp recovers known coefficients" {
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

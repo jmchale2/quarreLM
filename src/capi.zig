@@ -103,7 +103,7 @@ fn solverCodeFromInt(code: c_int) ?bridge.Solver {
     return std.enums.fromInt(bridge.Solver, code);
 }
 
-fn olsMethodCodeFromInt(code: c_int) ?OLSMethod {
+fn olsMethodCodeFromInt(code: u64) ?OLSMethod {
     return std.enums.fromInt(OLSMethod, code);
 }
 test "invalid OLS method code does not resolve" {
@@ -119,7 +119,7 @@ pub const CFitOptions = extern struct {
     max_iter: u64,
     n_lambda: u64,
     lambda_min_ratio: f64,
-    ols_method: c_int,
+    ols_method: u64,
     penalty_factors: ?[*]const f64,
     lower_bounds: ?[*]const f64,
     upper_bounds: ?[*]const f64,
@@ -220,7 +220,7 @@ export fn quarrel_fit_path(
         return errorToC(errors.QError.WrongAPICall);
     }
 
-    const ols_method_enum = olsMethodCodeFromInt(solver) orelse return fail(
+    const ols_method_enum = olsMethodCodeFromInt(opts.ols_method) orelse return fail(
         errors.QError.ParameterError,
         "OLS Method Enum {d} did not resolve",
         .{opts.ols_method},

@@ -99,6 +99,7 @@ test "axpy single element" {
 }
 
 pub fn dotProduct(a: []const f64, b: []const f64) f64 {
+    std.debug.assert(a.len == b.len);
     const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4; // per-target lane count; fallback 4 (AVX2-ish)
     const n = a.len;
 
@@ -511,4 +512,8 @@ test "pack -> gram -> factor -> solve recovers OLS coefficients" {
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), beta[0], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), beta[1], 1e-10);
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }
