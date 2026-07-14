@@ -1,0 +1,14 @@
+[tool.uv.workspace]
+members = ["py-quarrelm"]
+
+[dependency-groups]
+dev = [
+    "py-quarrelm",
+    "pandas>=3.0",        
+    "polars>=1.40",
+    "scikit-learn>=1.9",
+    "statsmodels>=0.14",
+]
+
+[tool.uv.sources]
+py-quarrelm = { workspace = true }

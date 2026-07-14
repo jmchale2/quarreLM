@@ -5,3 +5,9 @@ zig-out/
 *plan.md
 
 scratch*.*
+
+benchmarks/data/*.data
+!benchmarks/data/*.gz
+
+.venv
+uv.lock

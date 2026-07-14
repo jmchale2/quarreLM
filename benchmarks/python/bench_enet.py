@@ -8,7 +8,6 @@ import ctypes
 
 import sys
 
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 from quarrelm._core import (
     enet,
     _lib,

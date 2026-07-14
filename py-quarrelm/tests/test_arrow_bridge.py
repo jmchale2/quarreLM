@@ -2,9 +2,6 @@
 import polars as pl
 import pyarrow as pa
 
-import sys
-
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).parents[1]))
 from quarrelm._core import (
     _extract_stream_pointer,
     _extract_array_pointers,

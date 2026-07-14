@@ -3,10 +3,6 @@ import polars as pl
 import pandas as pd
 from sklearn.linear_model import LinearRegression
 
-# Add parent to path so we can import zigregress
-import sys
-
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).parents[1]))
 from quarrelm._core import ping
 from quarrelm.api import ols
 

@@ -8,7 +8,6 @@ import polars as pl
 import sys
 
 
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).parents[1]))
 from quarrelm import errors
 from quarrelm._core import (
     _lib,

@@ -15,7 +15,6 @@ import statsmodels.api as sm
 from sklearn.linear_model import LinearRegression
 from scipy.linalg import solve as scipy_solve
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
 from quarrelm.api import ols  # noqa: E402
 from quarrelm._core import get_version
 
