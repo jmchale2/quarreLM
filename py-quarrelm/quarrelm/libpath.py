@@ -57,6 +57,22 @@ def _verify_lib(lib: ctypes.CDLL) -> None:
     lib.quarrel_abi_probe.argtypes = (
         [ctypes.c_void_p] * 7 + [ctypes.c_int] + [ctypes.c_double] * 3 + [ctypes.c_int]
     )
+
+    lib.quarrel_version.restype = ctypes.c_char_p
+    lib.quarrel_version.argtypes = []
+
+    version = lib.quarrel_version().decode()
+    build = version.split(":optim-")[-1]
+    if build != "ReleaseFast":
+        import warnings
+
+        warnings.warn(
+            f"libquarrelm was built with optimize mode {build!r}, not ReleaseFast — "
+            "performance will not be representative",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
     buf = ctypes.c_double(0.0)
     p = ctypes.cast(ctypes.byref(buf), ctypes.c_void_p)
     ok = lib.quarrel_abi_probe(p, p, p, p, p, p, p, 42, 1.5, 2.5, 3.5, 7)

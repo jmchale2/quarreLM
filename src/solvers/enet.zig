@@ -718,3 +718,7 @@ test "elasticNetFitInner gram and naive branches agree from a warm start" {
     try checkKKT(alloc, &cols, &y, &coefs_naive, opts, 1e-6);
     try checkKKT(alloc, &cols, &y, &coefs_gram, opts, 1e-6);
 }
+
+test {
+    std.testing.refAllDecls(@This());
+}

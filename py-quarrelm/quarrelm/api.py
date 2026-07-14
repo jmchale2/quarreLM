@@ -1,15 +1,27 @@
-from quarrelm._core import quarrel_fit, quarrel_fit_path, SOLVER
+from quarrelm._core import quarrel_fit, quarrel_fit_path, SOLVER, OLSMETHOD
 from quarrelm._params import FitOptions, OLSResult, ElasticNetResult
 
 import numpy as np
 from narwhals.typing import IntoDataFrame
 
 
-def ols(df: IntoDataFrame, target: str) -> OLSResult:
-    solver = SOLVER.OLS
-    fitopts = FitOptions()  # no valid params
-    results = quarrel_fit(df, target, solver, fitopts)
-    return results
+_OLS_METHODS = {
+    "auto": OLSMETHOD.AUTO,
+    "cholesky": OLSMETHOD.CHOLESKY,
+    "ge": OLSMETHOD.GAUSSIAN_ELIM,
+    "gaussian_elim": OLSMETHOD.GAUSSIAN_ELIM,
+}
+
+
+def ols(df: IntoDataFrame, target: str, method: str = "auto") -> OLSResult:
+    try:
+        m = _OLS_METHODS[method.lower()]
+    except KeyError:
+        raise ValueError(
+            f"method must be one of {sorted(_OLS_METHODS)}, got {method!r}"
+        )
+    fitopts = FitOptions(ols_method=int(m))
+    return quarrel_fit(df, target, SOLVER.OLS, fitopts)
 
 
 def enet(

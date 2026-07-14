@@ -12,6 +12,7 @@ pub fn build(b: *std.Build) void {
 
     const options = b.addOptions();
     options.addOption([]const u8, "version", version);
+    options.addOption([]const u8, "optimize", @tagName(optimize));
 
     const lib_module = b.createModule(.{
         .root_source_file = b.path("src/lib.zig"),

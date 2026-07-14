@@ -62,3 +62,4 @@ class FitOptions:
 
     tol: float = 1e-8
     max_iter: int = 10_000
+    ols_method: int = 0

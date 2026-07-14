@@ -1,0 +1,160 @@
+quarreLM OLS benchmark — 2026-07-14
+quarreLM build: v0.1.0-43-g6245851-dirty:optim-ReleaseFast
+python 3.13.12  numpy 2.4.2  scipy 1.17.1  sklearn 1.8.0
+machine: x86_64
+
+==========================================================================
+  n=100  p=5  (X: 0.0 MB)
+==========================================================================
+
+  Correctness (vs numpy lstsq):
+  normal eq (scipy pos)             max|diff vs lstsq| = 1.78e-15
+  sklearn                           max|diff vs lstsq| = 0.00e+00
+  statsmodels                       max|diff vs lstsq| = 5.55e-16
+  quarreLM GE                       max|diff vs lstsq| = 8.33e-16
+  quarreLM cholesky                 max|diff vs lstsq| = 1.28e-15
+
+  End-to-end (data in -> coefficients out):
+  numpy lstsq (numpy)               median=    0.009ms  best=    0.008ms  worst=    0.010ms
+  normal eq dposv (numpy)           median=    0.013ms  best=    0.012ms  worst=    0.016ms
+  sklearn (numpy)                   median=    0.093ms  best=    0.088ms  worst=    0.115ms
+  statsmodels (numpy)               median=    0.060ms  best=    0.057ms  worst=    0.072ms
+  quarreLM GE (polars)              median=    0.150ms  best=    0.117ms  worst=    0.387ms
+  quarreLM cholesky (polars)        median=    0.153ms  best=    0.114ms  worst=    0.254ms
+
+  Speedups:
+    cholesky vs GE:            0.98x
+    cholesky vs sklearn:       0.61x
+    cholesky vs statsmodels:   0.39x
+    cholesky vs numpy lstsq:   0.06x
+    cholesky vs normal eq:     0.08x
+
+==========================================================================
+  n=10,000  p=50  (X: 4.0 MB)
+==========================================================================
+
+  Correctness (vs numpy lstsq):
+  normal eq (scipy pos)             max|diff vs lstsq| = 5.77e-15
+  sklearn                           max|diff vs lstsq| = 0.00e+00
+  statsmodels                       max|diff vs lstsq| = 2.50e-15
+  quarreLM GE                       max|diff vs lstsq| = 3.66e-15
+  quarreLM cholesky                 max|diff vs lstsq| = 3.55e-15
+
+  End-to-end (data in -> coefficients out):
+  numpy lstsq (numpy)               median=    3.404ms  best=    3.322ms  worst=    3.533ms
+  normal eq dposv (numpy)           median=    0.543ms  best=    0.530ms  worst=    0.552ms
+  sklearn (numpy)                   median=    3.830ms  best=    3.814ms  worst=    4.041ms
+  statsmodels (numpy)               median=   12.314ms  best=   12.205ms  worst=   12.460ms
+  quarreLM GE (polars)              median=    1.841ms  best=    1.823ms  worst=    1.862ms
+  quarreLM cholesky (polars)        median=    1.221ms  best=    1.197ms  worst=    1.354ms
+
+  Speedups:
+    cholesky vs GE:            1.51x
+    cholesky vs sklearn:       3.14x
+    cholesky vs statsmodels:  10.08x
+    cholesky vs numpy lstsq:   2.79x
+    cholesky vs normal eq:     0.44x
+
+==========================================================================
+  n=100,000  p=100  (X: 80.0 MB)
+==========================================================================
+
+  Correctness (vs numpy lstsq):
+  normal eq (scipy pos)             max|diff vs lstsq| = 1.15e-14
+  sklearn                           max|diff vs lstsq| = 0.00e+00
+  statsmodels                       max|diff vs lstsq| = 3.11e-15
+  quarreLM GE                       max|diff vs lstsq| = 7.55e-15
+  quarreLM cholesky                 max|diff vs lstsq| = 6.66e-15
+
+  End-to-end (data in -> coefficients out):
+  numpy lstsq (numpy)               median=   67.038ms  best=   66.244ms  worst=   70.130ms
+  normal eq dposv (numpy)           median=   19.264ms  best=   18.971ms  worst=   23.805ms
+  sklearn (numpy)                   median=   78.497ms  best=   77.956ms  worst=   80.503ms
+  statsmodels (numpy)               median=  243.821ms  best=  240.031ms  worst=  249.031ms
+  quarreLM GE (polars)              median=   60.320ms  best=   60.213ms  worst=   60.913ms
+  quarreLM cholesky (polars)        median=   21.559ms  best=   17.966ms  worst=   23.117ms
+
+  Speedups:
+    cholesky vs GE:            2.80x
+    cholesky vs sklearn:       3.64x
+    cholesky vs statsmodels:  11.31x
+    cholesky vs numpy lstsq:   3.11x
+    cholesky vs normal eq:     0.89x
+
+==========================================================================
+  n=1,000,000  p=20  (X: 160.0 MB)
+==========================================================================
+
+  Correctness (vs numpy lstsq):
+  normal eq (scipy pos)             max|diff vs lstsq| = 5.77e-15
+  sklearn                           max|diff vs lstsq| = 0.00e+00
+  statsmodels                       max|diff vs lstsq| = 2.78e-15
+  quarreLM GE                       max|diff vs lstsq| = 7.11e-15
+  quarreLM cholesky                 max|diff vs lstsq| = 2.44e-15
+
+  End-to-end (data in -> coefficients out):
+  numpy lstsq (numpy)               median=  122.078ms  best=  120.587ms  worst=  125.441ms
+  normal eq dposv (numpy)           median=   14.576ms  best=   14.513ms  worst=   14.660ms
+  sklearn (numpy)                   median=  145.436ms  best=  143.519ms  worst=  146.769ms
+  statsmodels (numpy)               median=  526.194ms  best=  524.696ms  worst=  535.820ms
+  quarreLM GE (polars)              median=   33.766ms  best=   33.330ms  worst=   34.115ms
+  quarreLM cholesky (polars)        median=   24.709ms  best=   22.838ms  worst=   26.446ms
+
+  Speedups:
+    cholesky vs GE:            1.37x
+    cholesky vs sklearn:       5.89x
+    cholesky vs statsmodels:  21.30x
+    cholesky vs numpy lstsq:   4.94x
+    cholesky vs normal eq:     0.59x
+
+==========================================================================
+  n=1,000  p=500  (X: 4.0 MB)
+==========================================================================
+
+  Correctness (vs numpy lstsq):
+  normal eq (scipy pos)             max|diff vs lstsq| = 1.51e-14
+  sklearn                           max|diff vs lstsq| = 0.00e+00
+  statsmodels                       max|diff vs lstsq| = 1.08e-14
+  quarreLM GE                       max|diff vs lstsq| = 1.53e-14
+  quarreLM cholesky                 max|diff vs lstsq| = 1.37e-14
+
+  End-to-end (data in -> coefficients out):
+  numpy lstsq (numpy)               median=   20.483ms  best=   20.365ms  worst=   20.532ms
+  normal eq dposv (numpy)           median=   72.794ms  best=   22.998ms  worst=   78.579ms
+  sklearn (numpy)                   median=   21.769ms  best=   21.567ms  worst=   26.220ms
+  statsmodels (numpy)               median=   65.807ms  best=   65.571ms  worst=   68.698ms
+  quarreLM GE (polars)              median=   21.969ms  best=   21.795ms  worst=   22.203ms
+  quarreLM cholesky (polars)        median=    7.162ms  best=    6.937ms  worst=    8.052ms
+
+  Speedups:
+    cholesky vs GE:            3.07x
+    cholesky vs sklearn:       3.04x
+    cholesky vs statsmodels:   9.19x
+    cholesky vs numpy lstsq:   2.86x
+    cholesky vs normal eq:    10.16x
+
+==========================================================================
+  n=100,000  p=500  (X: 400.0 MB)
+==========================================================================
+
+  Correctness (vs numpy lstsq):
+  normal eq (scipy pos)             max|diff vs lstsq| = 2.75e-14
+  sklearn                           max|diff vs lstsq| = 1.41e-14
+  statsmodels                       max|diff vs lstsq| = 1.18e-14
+  quarreLM GE                       max|diff vs lstsq| = 1.38e-14
+  quarreLM cholesky                 max|diff vs lstsq| = 8.47e-15
+
+  End-to-end (data in -> coefficients out):
+  numpy lstsq (numpy)               median=  565.598ms  best=  560.880ms  worst=  570.610ms
+  normal eq dposv (numpy)           median=  161.595ms  best=  105.014ms  worst=  165.843ms
+  sklearn (numpy)                   median=  630.428ms  best=  616.794ms  worst=  664.076ms
+  statsmodels (numpy)               median= 2232.134ms  best= 2196.176ms  worst= 2410.630ms
+  quarreLM GE (polars)              median= 1716.473ms  best= 1711.701ms  worst= 1732.989ms
+  quarreLM cholesky (polars)        median=   87.353ms  best=   83.594ms  worst=   90.395ms
+
+  Speedups:
+    cholesky vs GE:           19.65x
+    cholesky vs sklearn:       7.22x
+    cholesky vs statsmodels:  25.55x
+    cholesky vs numpy lstsq:   6.47x
+    cholesky vs normal eq:     1.85x

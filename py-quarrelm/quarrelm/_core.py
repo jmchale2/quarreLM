@@ -31,7 +31,7 @@ _lib.quarrel_version.argtypes = []
 
 
 def get_version():
-    return _lib.quarrel_version()
+    return _lib.quarrel_version().decode()
 
 
 _lib.quarrel_ping.restype = ctypes.c_int
@@ -383,6 +383,7 @@ def quarrel_fit(df, target: str, solver: SOLVER, fitopts: FitOptions):
         upper_bounds=fitopts.upper_bounds,
         warm_start=fitopts.warm_start,
         n_features=data.n_features,
+        ols_method=fitopts.ols_method,
     )
 
     result, out_coefs = _build_fit_result(data.n_features)

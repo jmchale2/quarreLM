@@ -61,7 +61,7 @@ export fn quarrel_ping() callconv(.c) c_int {
 /// Returns the library version as a static string.
 export fn quarrel_version() callconv(.c) [*:0]const u8 {
     errors.clearContext();
-    return build_options.version ++ "\x00";
+    return build_options.version ++ ":optim-" ++ build_options.optimize ++ "\x00";
 }
 
 /// Returns the sizeof fit options struct. Can be used for runtime size validation.

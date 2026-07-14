@@ -1,40 +1,40 @@
 # benchmarks/bench_ols.py
-import time
-import numpy as np
-import polars as pl
-from sklearn.linear_model import LinearRegression
-import statsmodels.api as sm
+"""OLS benchmark: quarreLM (GE vs Cholesky) against sklearn / statsmodels / numpy.
+
+All contenders solve the same no-intercept least-squares problem.
+Coefficients are cross-checked against numpy lstsq before anything is timed.
+"""
 
 import sys
+import time
+from pathlib import Path
 
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
-from quarrelm._core import (
-    ols,
-    ols_simd,
-    _lib,
-    _extract_stream_pointer,
-    _extract_array_pointers,
-)
-import ctypes
-import pyarrow as pa
+import numpy as np
+import polars as pl
+import statsmodels.api as sm
+from sklearn.linear_model import LinearRegression
+from scipy.linalg import solve as scipy_solve
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from quarrelm.api import ols  # noqa: E402
+from quarrelm._core import get_version
 
 
 def generate_data(n, p, seed=42):
-    """Generate test data, return as Polars DataFrame."""
-    np.random.seed(seed)
-    true_coefs = np.random.randn(p)
-    X = np.random.randn(n, p)
-    y = X @ true_coefs + np.random.randn(n) * 0.1
+    """Test data as (polars df, numpy X, numpy y)."""
+    rng = np.random.default_rng(seed)
+    true_coefs = rng.standard_normal(p)
+    X = rng.standard_normal((n, p))
+    y = X @ true_coefs + rng.standard_normal(n) * 0.1
 
-    data = {"y": y.tolist()}
+    data = {"y": y}
     for i in range(p):
-        data[f"x{i}"] = X[:, i].tolist()
-
-    return pl.DataFrame(data), X, y, true_coefs
+        data[f"x{i}"] = X[:, i]
+    return pl.DataFrame(data), X, y
 
 
 def bench(fn, *args, warmup=3, runs=20, label=""):
-    """Benchmark a function, return median time in ms."""
+    """Median-of-runs wall time in ms."""
     for _ in range(warmup):
         fn(*args)
 
@@ -42,110 +42,117 @@ def bench(fn, *args, warmup=3, runs=20, label=""):
     for _ in range(runs):
         start = time.perf_counter_ns()
         fn(*args)
-        elapsed = (time.perf_counter_ns() - start) / 1e6  # ms
-        times.append(elapsed)
+        times.append((time.perf_counter_ns() - start) / 1e6)
 
     times.sort()
     median = times[len(times) // 2]
-    best = times[0]
-    worst = times[-1]
     print(
-        f"  {label:30s}  median={median:8.3f}ms  best={best:8.3f}ms  worst={worst:8.3f}ms"
+        f"  {label:32s}  median={median:9.3f}ms"
+        f"  best={times[0]:9.3f}ms  worst={times[-1]:9.3f}ms"
     )
     return median
 
 
-def bench_sklearn(X, y):
-    """Sklearn end-to-end (numpy in, coefficients out)."""
-    model = LinearRegression(fit_intercept=False)
-    model.fit(X, y)
-    return model.coef_
+# --- contenders (each: data in -> coefficient vector out) ---
 
 
-def bench_statsmodels(X, y):
-    """Statsmodels end-to-end."""
-    model = sm.OLS(y, X)
-    result = model.fit()
-    return result.params
+def fit_numpy(X, y):
+    return np.linalg.lstsq(X, y, rcond=None)[0]
 
 
-def bench_quarrelm(df):
-    """quarreLM scalar, end-to-end (Polars in, result out)."""
-    return ols(df, target="y")
+def fit_normal_eq(X, y):
+    """Normal equations via LAPACK dposv — numpy/scipy doing quarreLM's algorithm."""
+    return scipy_solve(X.T @ X, X.T @ y, assume_a="pos")
 
 
-def bench_quarrelm_simd(df):
-    """quarreLM SIMD, end-to-end (Polars in, result out)."""
-    return ols_simd(df, target="y")
+def fit_sklearn(X, y):
+    return LinearRegression(fit_intercept=False).fit(X, y).coef_
 
 
-def bench_zig_only(X, y_np):
-    """Zig SIMD, minimal overhead: pre-extracted Arrow pointers."""
-    # Pre-convert to Arrow outside the timer
-    p = X.shape[1]
-    table = pa.table({f"x{i}": X[:, i] for i in range(p)})
-    y_arr = pa.array(y_np, type=pa.float64())
+def fit_statsmodels(X, y):
+    return sm.OLS(y, X).fit().params
 
-    stream_ptr, _sc = _extract_stream_pointer(table)
-    y_array_ptr, y_schema_ptr, _yac, _ysc = _extract_array_pointers(y_arr)
-    out = np.zeros(p, dtype=np.float64)
-    out_ptr = out.ctypes.data_as(ctypes.c_void_p)
 
-    # This measures ONLY the Zig computation
-    _lib.quarrel_ols_fit_simd(
-        stream_ptr, y_array_ptr, y_schema_ptr, out_ptr, ctypes.c_int(p)
+def fit_quarrelm_ge(df):
+    return ols(df, target="y", method="ge").coef_array
+
+
+def fit_quarrelm_cholesky(df):
+    return ols(df, target="y", method="cholesky").coef_array
+
+
+def check_correctness(df, X, y):
+    """Every contender must agree with numpy lstsq before we time anything."""
+    ref = fit_numpy(X, y)
+    results = {
+        "normal eq (scipy pos)": fit_normal_eq(X, y),
+        "sklearn": fit_sklearn(X, y),
+        "statsmodels": np.asarray(fit_statsmodels(X, y)),
+        "quarreLM GE": fit_quarrelm_ge(df),
+        "quarreLM cholesky": fit_quarrelm_cholesky(df),
+    }
+    ok = True
+    for label, coefs in results.items():
+        max_diff = float(np.max(np.abs(coefs - ref)))
+        flag = ""
+        if not np.allclose(coefs, ref, rtol=1e-6, atol=1e-8):
+            flag = "  <-- DISAGREES, timings below are meaningless"
+            ok = False
+        print(f"  {label:32s}  max|diff vs lstsq| = {max_diff:.2e}{flag}")
+    return ok
+
+
+def run_suite(n, p, runs=20):
+    print(f"\n{'=' * 74}")
+    print(f"  n={n:,}  p={p}  (X: {n * p * 8 / 1e6:.1f} MB)")
+    print(f"{'=' * 74}")
+
+    df, X, y = generate_data(n, p)
+
+    print("\n  Correctness (vs numpy lstsq):")
+    check_correctness(df, X, y)
+
+    print("\n  End-to-end (data in -> coefficients out):")
+    t_np = bench(fit_numpy, X, y, runs=runs, label="numpy lstsq (numpy)")
+    t_ne = bench(fit_normal_eq, X, y, runs=runs, label="normal eq dposv (numpy)")
+    t_sk = bench(fit_sklearn, X, y, runs=runs, label="sklearn (numpy)")
+    t_sm = bench(fit_statsmodels, X, y, runs=runs, label="statsmodels (numpy)")
+    t_ge = bench(fit_quarrelm_ge, df, runs=runs, label="quarreLM GE (polars)")
+    t_ch = bench(
+        fit_quarrelm_cholesky, df, runs=runs, label="quarreLM cholesky (polars)"
     )
-    return out
 
-
-def run_suite(n, p):
-    print(f"\n{'=' * 70}")
-    print(f"  n={n:,}  p={p}  (matrix: {n * p * 8 / 1e6:.1f} MB)")
-    print(f"{'=' * 70}")
-
-    df, X, y, true_coefs = generate_data(n, p)
-
-    # End-to-end comparisons
-    print("\n  End-to-end (data in → coefficients out):")
-    t_sk = bench(bench_sklearn, X, y, label="sklearn (numpy)")
-    t_sm = bench(bench_statsmodels, X, y, label="statsmodels (numpy)")
-    t_scalar = bench(bench_quarrelm, df, label="quarreLM scalar (polars)")
-    t_simd = bench(bench_quarrelm_simd, df, label="quarreLM SIMD (polars)")
-
-    # Zig-only (no Python overhead)
-    # Need fresh Arrow export each run since PyCapsules are single-use
-    print("\n  Zig solver only (pre-extracted Arrow pointers):")
-
-    def zig_only_fresh():
-        """Fresh Arrow export + Zig solve each call."""
-        table = pa.table({f"x{i}": X[:, i] for i in range(p)})
-        y_arr = pa.array(y, type=pa.float64())
-        stream_ptr, _sc = _extract_stream_pointer(table)
-        y_ptr, y_sch, _a, _b = _extract_array_pointers(y_arr)
-        out = np.zeros(p, dtype=np.float64)
-        out_ptr = out.ctypes.data_as(ctypes.c_void_p)
-        _lib.quarrel_ols_fit_simd(stream_ptr, y_ptr, y_sch, out_ptr, ctypes.c_int(p))
-        return out
-
-    t_zig = bench(zig_only_fresh, label="Zig SIMD (arrow export + solve)")
-
-    # Summary
-    print(f"\n  Speedups vs sklearn:")
-    print(f"    quarreLM scalar e2e:  {t_sk / t_scalar:.2f}x")
-    print(f"    quarreLM SIMD e2e:    {t_sk / t_simd:.2f}x")
-    print(f"    Zig SIMD solver only: {t_sk / t_zig:.2f}x")
-    print(f"  SIMD vs scalar:         {t_scalar / t_simd:.2f}x")
+    print("\n  Speedups:")
+    print(f"    cholesky vs GE:          {t_ge / t_ch:6.2f}x")
+    print(f"    cholesky vs sklearn:     {t_sk / t_ch:6.2f}x")
+    print(f"    cholesky vs statsmodels: {t_sm / t_ch:6.2f}x")
+    print(f"    cholesky vs numpy lstsq: {t_np / t_ch:6.2f}x")
+    print(f"    cholesky vs normal eq:   {t_ne / t_ch:6.2f}x")
 
 
 if __name__ == "__main__":
-    # Small (sanity check)
+    import platform, sklearn, scipy
+
+    print(f"quarreLM OLS benchmark — {time.strftime('%Y-%m-%d')}")
+    print(f"quarreLM build: {get_version()}")
+    print(
+        f"python {platform.python_version()}  numpy {np.__version__}  "
+        f"scipy {scipy.__version__}  sklearn {sklearn.__version__}"
+    )
+    print(f"machine: {platform.processor() or platform.machine()}")
+
+    # Small: overhead-dominated (measures the boundary, not the solver)
     run_suite(n=100, p=5)
 
-    # Medium (typical use case)
+    # Typical DS regression shapes
     run_suite(n=10_000, p=50)
-
-    # Large (where SIMD should shine)
     run_suite(n=100_000, p=100)
 
-    # Wide (p approaching n)
-    run_suite(n=1_000, p=500)
+    # Tall-skinny: the bread-and-butter case, gram formation dominates
+    run_suite(n=1_000_000, p=20, runs=10)
+
+    # Wide: p pressure — where O(p^3) methods separate
+    run_suite(n=1_000, p=500, runs=10)
+
+    # Tall-Wide: p pressure — where O(p^3) methods separate
+    run_suite(n=100_000, p=500, runs=10)
