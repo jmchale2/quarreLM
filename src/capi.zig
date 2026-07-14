@@ -106,6 +106,10 @@ fn solverCodeFromInt(code: c_int) ?bridge.Solver {
 fn olsMethodCodeFromInt(code: c_int) ?OLSMethod {
     return std.enums.fromInt(OLSMethod, code);
 }
+test "invalid OLS method code does not resolve" {
+    try std.testing.expectEqual(@as(?OLSMethod, null), olsMethodCodeFromInt(99));
+    try std.testing.expectEqual(OLSMethod.auto, olsMethodCodeFromInt(0).?);
+}
 
 pub const CFitOptions = extern struct {
     struct_size: u64,
@@ -115,7 +119,7 @@ pub const CFitOptions = extern struct {
     max_iter: u64,
     n_lambda: u64,
     lambda_min_ratio: f64,
-    ols_method: u64,
+    ols_method: c_int,
     penalty_factors: ?[*]const f64,
     lower_bounds: ?[*]const f64,
     upper_bounds: ?[*]const f64,
@@ -160,7 +164,7 @@ export fn quarrel_fit(
         return errorToC(error.WrongAPICall);
     }
 
-    const ols_method_enum = olsMethodCodeFromInt(solver) orelse return fail(
+    const ols_method_enum = olsMethodCodeFromInt(opts.ols_method) orelse return fail(
         errors.QError.ParameterError,
         "OLS Method Enum {d} did not resolve",
         .{opts.ols_method},
@@ -384,4 +388,27 @@ test "quarrel_fit: struct_size mismatch is rejected" {
     var s = fixtures.mock.makeStream();
     const rc = quarrel_fit(&s, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
     try std.testing.expectEqual(@intFromEnum(errors.ErrorCode.StructSizeMismatch), rc);
+}
+
+test "quarrel_fit: invalid ols_method is rejected" {
+    var coefs = [_]f64{ 0, 0 };
+    const copts = CFitOptions{
+        .struct_size = @sizeOf(CFitOptions),
+        .lambda = 0.01,
+        .alpha = 0.5,
+        .tol = 1e-7,
+        .max_iter = 1000,
+        .n_lambda = 0,
+        .lambda_min_ratio = -1.0,
+        .ols_method = 99, // invalid on purpose
+        .penalty_factors = null,
+        .lower_bounds = null,
+        .upper_bounds = null,
+        .warm_start = null,
+    };
+    var out = CFitResult{ .struct_size = @sizeOf(CFitResult), .n_iter = 0, .out_coeffs = &coefs };
+
+    var s = fixtures.mock.makeStream();
+    const rc = quarrel_fit(&s, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.ols), &copts, &out);
+    try std.testing.expectEqual(@intFromEnum(errors.ErrorCode.ParameterError), rc);
 }

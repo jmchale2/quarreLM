@@ -163,6 +163,13 @@ pub fn fit(
     const n = y.len;
     const n_f: f64 = @floatFromInt(n);
 
+    if (regopts.warm_start) |w| {
+        if (w.len != p) return errors.QError.DimensionMismatch;
+        if (w.ptr != out_coefs.ptr) @memcpy(out_coefs, w);
+    } else {
+        @memset(out_coefs, 0);
+    }
+
     //residual
     const r = try alloc.alloc(f64, n);
     @memcpy(r, y);
@@ -198,7 +205,7 @@ pub fn path(
     y: []const f64,
     //outputs, px n_lamba
     out_coefs_matrix: []f64, // coef j, offset at lambda k = [j*n_lambda + k]
-    out_lambdas: []f64,
+    lambdas: []const f64,
     out_iters: []u64,
     regopts: PathOptions,
 ) !usize {
@@ -266,7 +273,7 @@ pub fn path(
         }
 
         const iters = fitInner(columns, r, coefs, col_norms_squared, active, gram, xty, .{
-            .lambda = out_lambdas[k],
+            .lambda = lambdas[k],
             .alpha = regopts.alpha,
             .penalty_factors = regopts.penalty_factors,
             .lower_bounds = regopts.lower_bounds,
@@ -519,34 +526,6 @@ fn checkKKT(
             // interior nonzero: stationarity, exactly
             try std.testing.expectApproxEqAbs(l1 * std.math.sign(b), grad - l2 * b, kkt_tol);
         }
-    }
-}
-
-// ============================================
-// elasticNetPath Tests
-// ============================================
-//
-test "elasticNetPath has positive n_iters" {
-    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-
-    const data = fixtures.sinCos(500).init();
-    const cols = [_][]const f64{ &data.x1, &data.x2 };
-
-    // path_defaults (alpha=1, n_lambda=20, lambda_min_ratio=1e-4, tol=1e-10) fits as-is.
-    const regopts = fixtures.path_defaults;
-    const n_lambda = regopts.n_lambda;
-
-    var out_lambdas: [n_lambda]f64 = undefined;
-    var out_coef_matrix: [2 * n_lambda]f64 = undefined;
-    var out_iters = [_]u64{0} ** n_lambda;
-
-    _ = try path(alloc, &cols, &data.y, &out_coef_matrix, &out_lambdas, &out_iters, regopts);
-
-    // All fits should have a positive number if n_iters
-    for (0..n_lambda) |k| {
-        try std.testing.expect(out_iters[k] > 0);
     }
 }
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const blas = @import("../blas.zig");
 
 const errors = @import("../errors.zig");
+const fixtures = @import("../fixtures.zig");
 
 pub fn axpy(a: f64, x: []const f64, y: []f64) void {
     std.debug.assert(x.len == y.len);
@@ -333,27 +334,181 @@ test "xty matches manual dotProduct" {
 }
 
 // Cholesky
+pub fn choleskyFactor(a: []f64, p: usize) !void {
+    std.debug.assert(a.len == p * p);
 
-pub fn choleskySolve(gram: []f64, b: []f64, p: usize) !void {
-    const info_f = blas.LAPACKE_dpotrf(
-        .ColMajor, // 102 — but G is symmetric+full, so forgiving here
-        'L',
-        @intCast(p),
-        gram.ptr,
-        @intCast(p),
-    );
-    if (info_f > 0) return errors.QError.NotPositiveDefinite; // collinear features → QR fallback
-    if (info_f < 0) return errors.QError.InvalidArgument; // marshalling bug (your side)
+    for (0..p) |j| {
+        // row_j = L[j][0..j], already computed (row-major: contiguous)
+        const row_j = a[j * p .. j * p + j];
 
-    const info_s = blas.LAPACKE_dpotrs(
-        .ColMajor,
-        'L',
-        @intCast(p),
-        1, // nrhs
-        gram.ptr, // the L from dpotrf
-        @intCast(p),
-        b.ptr, // in: X'y ; out: β
-        @intCast(p),
-    );
-    if (info_s != 0) return errors.QError.SolveFailed;
+        // diagonal: d = A[j][j] − Σ L[j][k]²
+        var d = a[j * p + j] - dotProduct(row_j, row_j);
+        if (d <= 0.0) return errors.QError.NotPositiveDefinite; // rank-deficient gram
+        d = @sqrt(d);
+        a[j * p + j] = d;
+
+        // below-diagonal: L[i][j] = (A[i][j] − <L[i][0..j], L[j][0..j]>) / L[j][j]
+        for (j + 1..p) |i| {
+            const row_i = a[i * p .. i * p + j];
+            const s = a[i * p + j] - dotProduct(row_i, row_j);
+            a[i * p + j] = s / d;
+        }
+    }
+}
+
+pub fn choleskySolve(l: []const f64, b: []f64, p: usize) void {
+    std.debug.assert(l.len == p * p);
+    std.debug.assert(b.len == p);
+
+    // forward substitution: L·y = b (y overwrites b)
+    for (0..p) |i| {
+        const s = b[i] - dotProduct(l[i * p .. i * p + i], b[0..i]);
+        b[i] = s / l[i * p + i];
+    }
+
+    // back substitution: L'·x = y (x overwrites y)
+    var i: usize = p;
+    while (i > 0) {
+        i -= 1;
+        var s = b[i];
+        for (i + 1..p) |k| {
+            s -= l[k * p + i] * b[k];
+        }
+        b[i] = s / l[i * p + i];
+    }
+}
+
+// Cholesky Tests
+
+test "choleskyFactor known 2x2" {
+    // A = [4 2; 2 3]  →  L = [2 0; 1 √2]
+    var a = [_]f64{ 4, 2, 2, 3 };
+    try choleskyFactor(&a, 2);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), a[0], 1e-12); // L[0][0]
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), a[2], 1e-12); // L[1][0]
+    try std.testing.expectApproxEqAbs(@sqrt(@as(f64, 2.0)), a[3], 1e-12); // L[1][1]
+    // upper triangle is stale A by contract — a[1] still 2
+    try std.testing.expectEqual(@as(f64, 2.0), a[1]);
+}
+
+test "choleskyFactor round-trips a constructed L" {
+    // Build A = L_true·L_true', factor it, expect L_true back exactly.
+    // Chosen so every pivot is a perfect square: d values are 4, 9, 2.25.
+    const l_true = [_]f64{
+        2.0, 0,    0,
+        1.0, 3.0,  0,
+        0.5, -1.0, 1.5,
+    };
+    // A = L·L' (hand-computed, exact)
+    var a = [_]f64{
+        4.0, 2.0,  1.0,
+        2.0, 10.0, -2.5,
+        1.0, -2.5, 3.5,
+    };
+    try choleskyFactor(&a, 3);
+
+    for (0..3) |i| {
+        for (0..i + 1) |j| { // lower triangle only
+            try std.testing.expectApproxEqAbs(l_true[i * 3 + j], a[i * 3 + j], 1e-12);
+        }
+    }
+}
+
+test "choleskyFactor rejects non-positive-definite" {
+    // A = [1 2; 2 1]: symmetric, eigenvalues {3, -1} → not PD.
+    // Second pivot: 1 − 2² = −3, deterministically ≤ 0 (no FP-borderline).
+    var a = [_]f64{ 1, 2, 2, 1 };
+    try std.testing.expectError(errors.QError.NotPositiveDefinite, choleskyFactor(&a, 2));
+}
+test "choleskySolve recovers known solution" {
+    // A = [4 2; 2 3], x_true = [1, 2]  →  b = A·x_true = [8, 8]
+    var a = [_]f64{ 4, 2, 2, 3 };
+    try choleskyFactor(&a, 2);
+
+    var b = [_]f64{ 8, 8 };
+    choleskySolve(&a, &b, 2);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), b[0], 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), b[1], 1e-12);
+}
+
+test "choleskySolve identity is a no-op" {
+    // L = I → forward and back substitution both leave b untouched.
+    const eye = [_]f64{ 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+    var b = [_]f64{ 3.5, -2.0, 7.25 };
+    choleskySolve(&eye, &b, 3);
+    try std.testing.expectEqual(@as(f64, 3.5), b[0]);
+    try std.testing.expectEqual(@as(f64, -2.0), b[1]);
+    try std.testing.expectEqual(@as(f64, 7.25), b[2]);
+}
+
+pub fn packX(columns: []const []const f64, X: []f64, n: usize) void {
+    std.debug.assert(X.len == columns.len * n);
+    for (columns, 0..) |col, j| {
+        std.debug.assert(col.len == n);
+        @memcpy(X[j * n .. (j + 1) * n], col);
+    }
+}
+
+test "packX lays columns end-to-end (column-major)" {
+    const col0 = [_]f64{ 1, 2, 3 };
+    const col1 = [_]f64{ 4, 5, 6 };
+    const cols = [_][]const f64{ &col0, &col1 };
+
+    var X: [6]f64 = undefined;
+    packX(&cols, &X, 3);
+
+    const want = [_]f64{ 1, 2, 3, 4, 5, 6 };
+    for (0..6) |i| {
+        try std.testing.expectEqual(want[i], X[i]);
+    }
+}
+
+test "packX feeds gramMatrix identically to dotProduct" {
+    const col0 = [_]f64{ 1, 2, 3, 4, 5 };
+    const col1 = [_]f64{ 5, 4, 3, 2, 1 };
+    const col2 = [_]f64{ 1, 0, 1, 0, 1 };
+    const cols = [_][]const f64{ &col0, &col1, &col2 };
+    const n = 5;
+    const p = 3;
+    const n_f: f64 = @floatFromInt(n);
+
+    var X: [n * p]f64 = undefined;
+    packX(&cols, &X, n);
+
+    var gram: [p * p]f64 = undefined;
+    gramMatrix(&X, n, p, &gram);
+
+    for (0..p) |i| {
+        for (0..p) |j| {
+            const manual = dotProduct(cols[i], cols[j]) / n_f;
+            try std.testing.expectApproxEqAbs(manual, gram[i * p + j], 1e-10);
+        }
+    }
+}
+
+test "pack -> gram -> factor -> solve recovers OLS coefficients" {
+    // Full normal-equations pipeline on the exact_2col fixture:
+    // (X'X/n)·β = X'y/n, y = 2·x1 + 3·x2 exactly → β = [2, 3].
+    // Gram is [11 8.2; 8.2 6.8] (PD, det 7.56); X'y/n = [46.6, 36.8].
+    const cols = fixtures.exact_2col.cols;
+    const y = fixtures.exact_2col.y;
+    const n = y.len;
+    const p = 2;
+
+    var X: [n * p]f64 = undefined;
+    packX(&cols, &X, n);
+
+    var gram: [p * p]f64 = undefined;
+    gramMatrix(&X, n, p, &gram);
+
+    var beta: [p]f64 = undefined;
+    xty(&X, &y, n, p, &beta);
+
+    try choleskyFactor(&gram, p);
+    choleskySolve(&gram, &beta, p);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), beta[0], 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), beta[1], 1e-10);
 }

@@ -2,8 +2,11 @@ const std = @import("std");
 const errors = @import("../errors.zig");
 
 const fixtures = @import("../fixtures.zig");
-const dotProduct = @import("common.zig").dotProduct;
-const axpy = @import("common.zig").axpy;
+
+const common = @import("common.zig");
+
+const dotProduct = common.dotProduct;
+const axpy = common.axpy;
 
 pub const Options = struct {
     method: Method = Method.auto,
@@ -107,6 +110,47 @@ test "gaussian elimination recovers known coefficients" {
     var coefs: [2]f64 = undefined;
 
     try gaussianElim(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);
+}
+
+pub fn choleskyDecomp(
+    alloc: std.mem.Allocator,
+    columns: []const []const f64,
+    y: []const f64,
+    out_coefs: []f64,
+) !void {
+    const p = columns.len;
+    std.debug.assert(out_coefs.len == p);
+    const n = y.len;
+
+    // X'X (p x p symmetric matrix)
+    const xtx = try alloc.alloc(f64, p * p);
+
+    const X = try alloc.alloc(f64, p * n);
+    common.packX(columns, X, n);
+
+    common.gramMatrix(X, n, p, xtx);
+
+    // X'y (p x 1 matrix)
+    const xty = try alloc.alloc(f64, p);
+    common.xty(X, y, n, p, xty);
+
+    try common.choleskyFactor(xtx, p);
+    common.choleskySolve(xtx, xty, p);
+
+    @memcpy(out_coefs, xty);
+}
+
+test "cholesky decomp recovers known coefficients" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    // y = 2*x1 + 3*x2, no noise: recover exactly [2, 3]
+    var coefs: [2]f64 = undefined;
+
+    try choleskyDecomp(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs);
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);

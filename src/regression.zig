@@ -31,7 +31,7 @@ pub fn olsFit(
 
     switch (regopts.method) {
         ols.Method.auto => {
-            try ols.gaussianElim(
+            try ols.choleskyDecomp(
                 alloc,
                 columns,
                 y,
@@ -39,7 +39,12 @@ pub fn olsFit(
             );
         },
         ols.Method.cholesky => {
-            return errors.QError.NotImplemented;
+            try ols.choleskyDecomp(
+                alloc,
+                columns,
+                y,
+                out_coefs,
+            );
         },
 
         ols.Method.gaussian_elimination => {
@@ -53,7 +58,7 @@ pub fn olsFit(
     }
 }
 
-test "OLSVec recovers known coefficients" {
+test "OLSFit - auto recovers known coefficients" {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -61,6 +66,38 @@ test "OLSVec recovers known coefficients" {
     var coefs: [2]f64 = undefined;
 
     const regopts = fixtures.ols_defaults;
+
+    try olsFit(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs, regopts);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);
+}
+
+test "OLSFit - cholesky recovers known coefficients" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    // y = 2*x1 + 3*x2, no noise: recover exactly [2, 3]
+    var coefs: [2]f64 = undefined;
+
+    var regopts = fixtures.ols_defaults;
+    regopts.method = ols.Method.cholesky;
+
+    try olsFit(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs, regopts);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);
+}
+
+test "OLSFit - GE recovers known coefficients" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    // y = 2*x1 + 3*x2, no noise: recover exactly [2, 3]
+    var coefs: [2]f64 = undefined;
+
+    var regopts = fixtures.ols_defaults;
+    regopts.method = ols.Method.gaussian_elimination;
 
     try olsFit(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs, regopts);
 
@@ -84,13 +121,6 @@ pub fn elasticNetFit(
         if (columns[j].len != n) {
             return errors.QError.DimensionMismatch;
         }
-    }
-
-    if (regopts.warm_start) |w| {
-        if (w.len != p) return errors.QError.DimensionMismatch;
-        if (w.ptr != out_coefs.ptr) @memcpy(out_coefs, w);
-    } else {
-        @memset(out_coefs, 0);
     }
 
     const total_passes = enet.fit(alloc, columns, y, out_coefs, regopts);
@@ -144,8 +174,10 @@ pub fn elasticNetPath(
     var lambda_max: f64 = 0.0;
     const alpha_safe = @max(regopts.alpha, 1e-3);
 
-    errors.setContext("elasticNetPath requires n_lambda >= 2, received: {d}", .{regopts.n_lambda});
-    if (regopts.n_lambda < 2) return errors.QError.ParameterError;
+    if (regopts.n_lambda < 2) {
+        errors.setContext("elasticNetPath requires n_lambda >= 2, received: {d}", .{regopts.n_lambda});
+        return errors.QError.ParameterError;
+    }
 
     for (0..p) |j| {
         if (regopts.penalty_factors[j] == 0.0) continue;
@@ -168,6 +200,33 @@ pub fn elasticNetPath(
     return total_iters;
 }
 
+// ============================================
+// elasticNetPath Tests
+// ============================================
+//
+test "elasticNetPath has positive n_iters" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const data = fixtures.sinCos(500).init();
+    const cols = [_][]const f64{ &data.x1, &data.x2 };
+
+    // path_defaults (alpha=1, n_lambda=20, lambda_min_ratio=1e-4, tol=1e-10) fits as-is.
+    const regopts = fixtures.path_defaults;
+    const n_lambda = regopts.n_lambda;
+
+    var out_lambdas: [n_lambda]f64 = undefined;
+    var out_coef_matrix: [2 * n_lambda]f64 = undefined;
+    var out_iters = [_]u64{0} ** n_lambda;
+
+    _ = try elasticNetPath(alloc, &cols, &data.y, &out_coef_matrix, &out_lambdas, &out_iters, regopts);
+
+    // All fits should have a positive number if n_iters
+    for (0..n_lambda) |k| {
+        try std.testing.expect(out_iters[k] > 0);
+    }
+}
 test "elasticNetPath produces decreasing lambda sequence" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
