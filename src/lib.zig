@@ -4,6 +4,7 @@ pub const regression = @import("regression.zig");
 const blas = @import("blas.zig");
 
 pub const bridge = @import("bridge.zig");
+pub const solvers = @import("solvers/mod.zig");
 
 pub const build_options = @import("build_options");
 

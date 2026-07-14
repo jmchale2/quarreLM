@@ -5,6 +5,9 @@ const errors = @import("errors.zig");
 
 const build_options = @import("build_options");
 const fixtures = @import("fixtures.zig");
+
+const OLSMethod = @import("solvers/ols.zig").Method;
+
 //============================
 // capi  error management
 //============================
@@ -99,6 +102,11 @@ fn solverToCode(solver: bridge.Solver) c_int {
 fn solverCodeFromInt(code: c_int) ?bridge.Solver {
     return std.enums.fromInt(bridge.Solver, code);
 }
+
+fn olsMethodCodeFromInt(code: c_int) ?OLSMethod {
+    return std.enums.fromInt(OLSMethod, code);
+}
+
 pub const CFitOptions = extern struct {
     struct_size: u64,
     lambda: f64,
@@ -107,6 +115,7 @@ pub const CFitOptions = extern struct {
     max_iter: u64,
     n_lambda: u64,
     lambda_min_ratio: f64,
+    ols_method: u64,
     penalty_factors: ?[*]const f64,
     lower_bounds: ?[*]const f64,
     upper_bounds: ?[*]const f64,
@@ -151,6 +160,12 @@ export fn quarrel_fit(
         return errorToC(error.WrongAPICall);
     }
 
+    const ols_method_enum = olsMethodCodeFromInt(solver) orelse return fail(
+        errors.QError.ParameterError,
+        "OLS Method Enum {d} did not resolve",
+        .{opts.ols_method},
+    );
+
     const out_coeffs = out.out_coeffs orelse return errorToC(errors.QError.ParameterError);
 
     const fit_opts = bridge.FitOptions{
@@ -162,6 +177,8 @@ export fn quarrel_fit(
         .warm_start = opts.warm_start,
         .tol = opts.tol,
         .max_iter = opts.max_iter,
+
+        .ols_method = ols_method_enum,
 
         // path only
         .n_lambda = opts.n_lambda,
@@ -199,6 +216,12 @@ export fn quarrel_fit_path(
         return errorToC(errors.QError.WrongAPICall);
     }
 
+    const ols_method_enum = olsMethodCodeFromInt(solver) orelse return fail(
+        errors.QError.ParameterError,
+        "OLS Method Enum {d} did not resolve",
+        .{opts.ols_method},
+    );
+
     const out_coeffs_matrix = out.out_coeffs_matrix orelse return errorToC(errors.QError.ParameterError);
     const lambda_paths = out.lambda_paths orelse return errorToC(errors.QError.ParameterError);
     const n_iters = out.n_iters orelse return errorToC(errors.QError.ParameterError);
@@ -220,6 +243,7 @@ export fn quarrel_fit_path(
         .warm_start = opts.warm_start,
         .tol = opts.tol,
         .max_iter = opts.max_iter,
+        .ols_method = ols_method_enum,
 
         // path only
         .n_lambda = opts.n_lambda,
@@ -256,6 +280,7 @@ test "quarrel_fit matches bridge.fit (capi plumbing)" {
         .max_iter = 1000,
         .n_lambda = 0, // wire sentinel: unset
         .lambda_min_ratio = -1.0, // wire sentinel: unset
+        .ols_method = 0,
         .penalty_factors = &pf,
         .lower_bounds = &lb,
         .upper_bounds = &ub,
@@ -279,6 +304,7 @@ test "quarrel_fit matches bridge.fit (capi plumbing)" {
         .max_iter = 1000,
         .n_lambda = null,
         .lambda_min_ratio = null,
+        .ols_method = OLSMethod.auto,
         .penalty_factors = &pf,
         .lower_bounds = &lb,
         .upper_bounds = &ub,
@@ -313,6 +339,7 @@ test "quarrel_fit: null pf/lb/ub produce the defaults" {
         .max_iter = 1000,
         .n_lambda = 0,
         .lambda_min_ratio = -1.0,
+        .ols_method = 0,
         .penalty_factors = &explicit_pf,
         .lower_bounds = &explicit_lb,
         .upper_bounds = &explicit_ub,
@@ -346,6 +373,7 @@ test "quarrel_fit: struct_size mismatch is rejected" {
         .max_iter = 1000,
         .n_lambda = 0,
         .lambda_min_ratio = -1.0,
+        .ols_method = 0,
         .penalty_factors = null,
         .lower_bounds = null,
         .upper_bounds = null,

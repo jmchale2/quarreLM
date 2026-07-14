@@ -13,6 +13,10 @@ pub const QError = arrow.ArrowError || error{
     WrongAPICall,
     StructSizeMismatch,
     InvalidValue,
+    NotPositiveDefinite,
+    InvalidArgument,
+    SolveFailed,
+    NotImplemented,
 };
 
 pub const ErrorCode = enum(c_int) {
@@ -33,6 +37,10 @@ pub const ErrorCode = enum(c_int) {
     StructSizeMismatch = -14,
     WrongAPICall = -15,
     InvalidValue = -16,
+    NotPositiveDefinite = -17,
+    InvalidArgument = -18,
+    SolveFailed = -19,
+    NotImplemented = -20,
     Unknown = -99,
 };
 

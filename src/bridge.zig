@@ -5,6 +5,12 @@ const regression = @import("regression.zig");
 const errors = @import("errors.zig");
 const fixtures = @import("fixtures.zig");
 
+const OLSMethod = @import("solvers/ols.zig").Method;
+const OLSOptions = @import("solvers/ols.zig").Options;
+
+const EnetOptions = @import("solvers/enet.zig").Options;
+const PathOptions = @import("solvers/enet.zig").PathOptions;
+
 pub const Table = struct {
     schema: arrow.ArrowSchema,
     batches: std.ArrayList(arrow.ArrowArray),
@@ -109,6 +115,7 @@ pub const FitOptions = struct {
     lower_bounds: ?[*]const f64,
     upper_bounds: ?[*]const f64,
     warm_start: ?[*]const f64,
+    ols_method: OLSMethod = OLSMethod.auto,
 };
 
 pub const FitResult = struct {
@@ -147,7 +154,10 @@ pub fn fit(
     var n_iters: usize = undefined;
     switch (solver_enum) {
         .ols => {
-            _ = try regression.olsFitVec(table.columns, y, out.out_coeffs[0..p]);
+            const ols_opts: OLSOptions = .{
+                .method = opts.ols_method,
+            };
+            _ = try regression.olsFit(alloc, table.columns, y, out.out_coeffs[0..p], ols_opts);
             n_iters = 0;
         },
         .enet => {
@@ -155,7 +165,7 @@ pub fn fit(
             const lower_bounds = try sliceOrFill(alloc, opts.lower_bounds, p, -std.math.inf(f64));
             const upper_bounds = try sliceOrFill(alloc, opts.upper_bounds, p, std.math.inf(f64));
 
-            const enet_opts: regression.EnetOptions = .{
+            const enet_opts: EnetOptions = .{
                 .lambda = opts.lambda,
                 .alpha = opts.alpha,
                 .penalty_factors = penalty_factors,
@@ -218,7 +228,7 @@ pub fn fit_path(
 
             const n_lambda = opts.n_lambda orelse return errors.QError.ParameterError;
 
-            const path_opts: regression.PathOptions = .{
+            const path_opts: PathOptions = .{
                 .alpha = opts.alpha,
                 .penalty_factors = penalty_factors,
                 .lower_bounds = lower_bounds,
@@ -331,7 +341,7 @@ pub fn elasticNetFit(
     if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
 
     // marshall params
-    const params = regression.EnetOptions{
+    const params = EnetOptions{
         .lambda = lambda,
         .alpha = alpha,
         .penalty_factors = penalty_factors[0..p],
@@ -382,7 +392,7 @@ pub fn elasticNetPath(
 
     if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
 
-    const params = regression.PathOptions{
+    const params = PathOptions{
         .alpha = alpha,
         .penalty_factors = penalty_factors[0..p],
         .lower_bounds = lower_bounds[0..p],

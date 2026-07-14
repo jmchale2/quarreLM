@@ -3,6 +3,12 @@ const regression = @import("regression.zig");
 const arrow = @import("arrow.zig");
 const std = @import("std");
 
+const OLSMethods = @import("solvers/ols.zig").Method;
+const OLSOptions = @import("solvers/ols.zig").Options;
+
+const EnetOptions = @import("solvers/enet.zig").Options;
+const PathOptions = @import("solvers/enet.zig").PathOptions;
+
 pub const inf = std.math.inf(f64);
 
 // Unpenalized penalty factors and open (unconstrained) box bounds, by width.
@@ -22,7 +28,11 @@ pub const pf_ones_4: [4]f64 = @splat(1.0);
 pub const lb_open_4: [4]f64 = @splat(-inf);
 pub const ub_open_4: [4]f64 = @splat(inf);
 
-pub const enet_defaults = regression.EnetOptions{
+pub const ols_defaults = OLSOptions{
+    .method = OLSMethods.auto,
+};
+
+pub const enet_defaults = EnetOptions{
     .lambda = 0.01,
     .alpha = 0.5,
     .penalty_factors = &pf_ones_2,
@@ -30,7 +40,7 @@ pub const enet_defaults = regression.EnetOptions{
     .upper_bounds = &ub_open_2,
     .tol = 1e-10,
 };
-pub const path_defaults = regression.PathOptions{
+pub const path_defaults = PathOptions{
     .alpha = 1.0,
     .penalty_factors = &pf_ones_2,
     .lower_bounds = &lb_open_2,

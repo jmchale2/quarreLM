@@ -44,16 +44,8 @@ pub fn build(b: *std.Build) void {
 
     const lib_tests = b.addTest(.{ .root_module = lib_module });
 
-    const blas_tests = b.addTest(.{ .root_module = blas_module });
-
     const run_lib_tests = b.addRunArtifact(lib_tests);
-
-    const run_blas_tests = b.addRunArtifact(blas_tests);
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_lib_tests.step);
-    test_step.dependOn(&run_blas_tests.step);
-
-    const blas_test_step = b.step("test-blas", "Run Blas Tests Directly");
-    blas_test_step.dependOn(&run_blas_tests.step);
 }

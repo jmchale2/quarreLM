@@ -174,6 +174,12 @@ class SOLVER(IntEnum):
     ENET_PATH = 2
 
 
+class OLSMETHOD(IntEnum):
+    AUTO = 0
+    CHOLESKY = 1
+    GAUSSIAN_ELIM = 2
+
+
 class _CFitOptions(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint64),
@@ -183,6 +189,7 @@ class _CFitOptions(ctypes.Structure):
         ("max_iter", ctypes.c_uint64),
         ("n_lambda", ctypes.c_uint64),
         ("lambda_min_ratio", ctypes.c_double),
+        ("ols_method", ctypes.c_uint64),
         ("penalty_factors", ctypes.POINTER(ctypes.c_double)),
         ("lower_bounds", ctypes.POINTER(ctypes.c_double)),
         ("upper_bounds", ctypes.POINTER(ctypes.c_double)),
@@ -258,6 +265,7 @@ def _build_opts(
     max_iter,
     n_lambda=0,
     lambda_min_ratio=-1,  # -1 is treated as None in capi.zig
+    ols_method=0,
     penalty_factors=None,
     lower_bounds=None,
     upper_bounds=None,
@@ -272,6 +280,7 @@ def _build_opts(
     opts.max_iter = max_iter
     opts.n_lambda = n_lambda
     opts.lambda_min_ratio = lambda_min_ratio
+    opts.ols_method = ols_method
 
     keepalive = []
 
