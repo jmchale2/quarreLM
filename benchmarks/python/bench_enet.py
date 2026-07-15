@@ -1,41 +1,37 @@
-# benchmarks/bench_enet.py
+import sys
 import time
+from pathlib import Path
+
 import numpy as np
 import polars as pl
 from sklearn.linear_model import ElasticNet, Lasso
-import pyarrow as pa
-import ctypes
 
-import sys
-
-from quarrelm._core import (
-    enet,
-    _lib,
-    _extract_stream_pointer,
-    _extract_array_pointers,
-)
+from quarrelm.api import enet  # noqa: E402
+from quarrelm._core import get_version  # noqa: E402
 
 
 def generate_data(n, p, sparsity=0.5, seed=42):
-    """Generate test data with some true zeros."""
-    np.random.seed(seed)
-    true_coefs = np.random.randn(p)
-    # Zero out a fraction of coefficients
+    """Test data with a fraction of true-zero coefficients.
+
+    Returns (polars df, numpy X, numpy y, true_coefs).
+    """
+    rng = np.random.default_rng(seed)
+    true_coefs = rng.standard_normal(p)
     n_zero = int(p * sparsity)
-    true_coefs[np.random.choice(p, n_zero, replace=False)] = 0.0
+    if n_zero:
+        true_coefs[rng.choice(p, n_zero, replace=False)] = 0.0
 
-    X = np.random.randn(n, p)
-    y = X @ true_coefs + np.random.randn(n) * 0.1
+    X = rng.standard_normal((n, p))
+    y = X @ true_coefs + rng.standard_normal(n) * 0.1
 
-    data = {"y": y.tolist()}
+    data = {"y": y}
     for i in range(p):
-        data[f"x{i}"] = X[:, i].tolist()
-
+        data[f"x{i}"] = X[:, i]
     return pl.DataFrame(data), X, y, true_coefs
 
 
 def bench(fn, *args, warmup=3, runs=20, label=""):
-    """Benchmark a function, return median time in ms."""
+    """Median-of-runs wall time in ms."""
     for _ in range(warmup):
         fn(*args)
 
@@ -43,162 +39,106 @@ def bench(fn, *args, warmup=3, runs=20, label=""):
     for _ in range(runs):
         start = time.perf_counter_ns()
         fn(*args)
-        elapsed = (time.perf_counter_ns() - start) / 1e6
-        times.append(elapsed)
+        times.append((time.perf_counter_ns() - start) / 1e6)
 
     times.sort()
     median = times[len(times) // 2]
-    best = times[0]
-    worst = times[-1]
     print(
-        f"  {label:40s}  median={median:8.3f}ms  best={best:8.3f}ms  worst={worst:8.3f}ms"
+        f"  {label:36s}  median={median:9.3f}ms"
+        f"  best={times[0]:9.3f}ms  worst={times[-1]:9.3f}ms"
     )
     return median
 
 
-def bench_sklearn_lasso(X, y, lambda_):
-    sk = Lasso(alpha=lambda_, fit_intercept=False, max_iter=100000, tol=1e-7)
-    sk.fit(X, y)
-    return sk.coef_
+# --- contenders (each: data in -> coefficient vector out) ---
 
 
-def bench_sklearn_enet(X, y, lambda_, alpha):
-    sk = ElasticNet(
-        alpha=lambda_, l1_ratio=alpha, fit_intercept=False, max_iter=100000, tol=1e-7
-    )
-    sk.fit(X, y)
-    return sk.coef_
+def fit_sklearn(X, y, alpha, lambda_, tol=1e-7):
+    """Lasso when alpha==1, else ElasticNet (sklearn alpha=our lambda, l1_ratio=our alpha)."""
+    if alpha == 1.0:
+        model = Lasso(alpha=lambda_, fit_intercept=False, max_iter=100000, tol=tol)
+    else:
+        model = ElasticNet(
+            alpha=lambda_, l1_ratio=alpha, fit_intercept=False, max_iter=100000, tol=tol
+        )
+    return model.fit(X, y).coef_
 
 
-def bench_quarrelm_enet(df, alpha, lambda_):
-    return enet(df, target="y", alpha=alpha, lambda_=lambda_, max_iter=100000, tol=1e-7)
+def fit_quarrelm(df, alpha, lambda_, tol=1e-7):
+    return enet(df, target="y", alpha=alpha, lambda_=lambda_, max_iter=100000, tol=tol)
 
 
-def bench_zig_only_enet(X, y_np, alpha, lambda_):
-    p = X.shape[1]
-    table = pa.table({f"x{i}": X[:, i] for i in range(p)})
-    y_arr = pa.array(y_np, type=pa.float64())
-    stream_ptr, _sc = _extract_stream_pointer(table)
-    y_ptr, y_sch, _a, _b = _extract_array_pointers(y_arr)
-    out = np.zeros(p, dtype=np.float64)
-    out_ptr = out.ctypes.data_as(ctypes.c_void_p)
+def check_correctness(df, X, y, alpha, lambda_):
+    """quarreLM must agree with sklearn (tight tol) before we time anything."""
+    sk_coefs = fit_sklearn(X, y, alpha, lambda_, tol=1e-10)
+    result = fit_quarrelm(df, alpha, lambda_, tol=1e-10)
+    zig_coefs = result.coef_array
 
-    pf = np.ones(p, dtype=np.float64)
-    lb = np.full(p, -np.inf, dtype=np.float64)
-    ub = np.full(p, np.inf, dtype=np.float64)
-    pf_ptr = pf.ctypes.data_as(ctypes.c_void_p)
-    lb_ptr = lb.ctypes.data_as(ctypes.c_void_p)
-    ub_ptr = ub.ctypes.data_as(ctypes.c_void_p)
-
-    _lib.quarrel_enet_fit(
-        stream_ptr,
-        y_ptr,
-        y_sch,
-        pf_ptr,
-        lb_ptr,
-        ub_ptr,
-        out_ptr,
-        ctypes.c_int(p),
-        ctypes.c_double(lambda_),
-        ctypes.c_double(alpha),
-        ctypes.c_double(1e-7),
-        ctypes.c_int(100000),
-    )
-    return out
+    max_diff = float(np.max(np.abs(zig_coefs - sk_coefs)))
+    n_nonzero = int(np.sum(np.abs(zig_coefs) > 1e-10))
+    flag = "  <-- DISAGREES, timings below are meaningless" if max_diff > 1e-3 else ""
+    print(f"  quarreLM vs sklearn   max|diff| = {max_diff:.2e}{flag}")
+    print(f"  sparsity: {n_nonzero}/{len(zig_coefs)} nonzero ({result.n_iter} iters)")
+    return max_diff <= 1e-3
 
 
-def run_suite(n, p, alpha, lambda_, sparsity=0.5):
-    penalty_name = "lasso" if alpha == 1.0 else f"enet(α={alpha})"
-    print(f"\n{'=' * 80}")
+def run_suite(n, p, alpha, lambda_, sparsity=0.5, runs=20):
+    penalty_name = "lasso" if alpha == 1.0 else f"enet(\u03b1={alpha})"
+    print(f"\n{'=' * 78}")
     print(
-        f"  n={n:,}  p={p}  λ={lambda_}  {penalty_name}  (matrix: {n * p * 8 / 1e6:.1f} MB)"
+        f"  n={n:,}  p={p}  \u03bb={lambda_}  {penalty_name}  (X: {n * p * 8 / 1e6:.1f} MB)"
     )
-    print(f"{'=' * 80}")
+    print(f"{'=' * 78}")
 
     df, X, y, true_coefs = generate_data(n, p, sparsity=sparsity)
-    n_true_nonzero = np.sum(true_coefs != 0)
-    print(f"  True nonzero coefficients: {n_true_nonzero}/{p}")
+    print(f"  True nonzero coefficients: {int(np.sum(true_coefs != 0))}/{p}")
 
-    # End-to-end comparisons
-    print(f"\n  End-to-end (data in → coefficients out):")
+    print("\n  Correctness (vs sklearn):")
+    check_correctness(df, X, y, alpha, lambda_)
 
-    if alpha == 1.0:
-        t_sk = bench(bench_sklearn_lasso, X, y, lambda_, label="sklearn Lasso (numpy)")
-    else:
-        t_sk = bench(
-            bench_sklearn_enet,
-            X,
-            y,
-            lambda_,
-            alpha,
-            label=f"sklearn ElasticNet (numpy)",
-        )
-
-    t_enet = bench(
-        bench_quarrelm_enet, df, alpha, lambda_, label="quarreLM enet (polars)"
+    print("\n  End-to-end (data in -> coefficients out):")
+    sk_label = "sklearn Lasso (numpy)" if alpha == 1.0 else "sklearn ElasticNet (numpy)"
+    t_sk = bench(fit_sklearn, X, y, alpha, lambda_, runs=runs, label=sk_label)
+    t_q = bench(
+        fit_quarrelm, df, alpha, lambda_, runs=runs, label="quarreLM enet (polars)"
     )
 
-    # Zig-only
-    print(f"\n  Zig solver only (arrow export + solve):")
+    # TODO(zig-bench): the "Zig solver only" timing (raw Arrow export + solve via
+    # the C ABI, pre-extracted pointers) was removed with the _core/ctypes plumbing.
+    # It returns as a native `zig build bench` step so the solver is timed without
+    # the Python boundary in the loop.
 
-    def zig_fresh():
-        return bench_zig_only_enet(X, y, alpha, lambda_)
-
-    t_zig = bench(zig_fresh, label="Zig enet (arrow export + solve)")
-
-    # Quick correctness check
-    if alpha == 1.0:
-        sk_coefs = (
-            Lasso(alpha=lambda_, fit_intercept=False, max_iter=100000, tol=1e-10)
-            .fit(X, y)
-            .coef_
-        )
-    else:
-        sk_coefs = (
-            ElasticNet(
-                alpha=lambda_,
-                l1_ratio=alpha,
-                fit_intercept=False,
-                max_iter=100000,
-                tol=1e-10,
-            )
-            .fit(X, y)
-            .coef_
-        )
-
-    zig_result = enet(
-        df, target="y", alpha=alpha, lambda_=lambda_, max_iter=100000, tol=1e-10
-    )
-    zig_coefs = zig_result.coef_array
-    max_diff = np.max(np.abs(zig_coefs - sk_coefs))
-    n_zig_nonzero = np.sum(np.abs(zig_coefs) > 1e-10)
-
-    # Summary
-    print(f"\n  Speedups vs sklearn:")
-    print(f"    quarreLM enet e2e:    {t_sk / t_enet:.2f}x")
-    print(f"    Zig enet solver only: {t_sk / t_zig:.2f}x")
-    print(f"  Correctness: max |zig - sklearn| = {max_diff:.2e}")
-    print(f"  Sparsity: {n_zig_nonzero}/{p} nonzero ({zig_result.n_iter} iterations)")
+    print("\n  Speedups:")
+    print(f"    quarreLM vs sklearn:  {t_sk / t_q:6.2f}x")
 
 
 if __name__ == "__main__":
-    # --- Lasso (alpha=1.0) ---
-    print("\n" + "=" * 80)
-    print("  LASSO BENCHMARKS (alpha=1.0)")
-    print("=" * 80)
+    import platform
+    import sklearn
 
+    print(f"quarreLM elastic-net benchmark \u2014 {time.strftime('%Y-%m-%d')}")
+    print(f"quarreLM build: {get_version()}")
+    print(
+        f"python {platform.python_version()}  numpy {np.__version__}  "
+        f"sklearn {sklearn.__version__}"
+    )
+    print(f"machine: {platform.processor() or platform.machine()}")
+
+    # --- Lasso (alpha=1.0) ---
+    print("\n" + "=" * 78)
+    print("  LASSO BENCHMARKS (alpha=1.0)")
+    print("=" * 78)
     run_suite(n=100, p=5, alpha=1.0, lambda_=0.05)
     run_suite(n=10_000, p=50, alpha=1.0, lambda_=0.05)
     run_suite(n=100_000, p=100, alpha=1.0, lambda_=0.05)
-    run_suite(n=1_000, p=500, alpha=1.0, lambda_=0.1)
+    run_suite(n=1_000, p=500, alpha=1.0, lambda_=0.1, runs=10)
 
     # --- Elastic Net (alpha=0.5) ---
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 78)
     print("  ELASTIC NET BENCHMARKS (alpha=0.5)")
-    print("=" * 80)
-
+    print("=" * 78)
     run_suite(n=100, p=5, alpha=0.5, lambda_=0.05)
     run_suite(n=10_000, p=50, alpha=0.5, lambda_=0.05)
     run_suite(n=100_000, p=100, alpha=0.5, lambda_=0.05)
-    run_suite(n=100_000, p=500, alpha=0.5, lambda_=0.05)
-    run_suite(n=1_000, p=500, alpha=0.5, lambda_=0.1)
+    run_suite(n=100_000, p=500, alpha=0.5, lambda_=0.05, runs=10)
+    run_suite(n=1_000, p=500, alpha=0.5, lambda_=0.1, runs=10)
