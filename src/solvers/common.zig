@@ -98,6 +98,35 @@ test "axpy single element" {
     try std.testing.expectApproxEqAbs(@as(f64, 9.5), y[0], 1e-10);
 }
 
+pub fn sumV(a: []const f64) f64 {
+    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4; // per-target lane count; fallback 4 (AVX2-ish)
+    const n = a.len;
+
+    var acc: @Vector(vec_len, f64) = @splat(0.0);
+
+    var i: usize = 0;
+    while (i + vec_len <= n) : (i += vec_len) {
+        const va: @Vector(vec_len, f64) = a[i..][0..vec_len].*;
+        acc += va;
+    }
+
+    var sum: f64 = @reduce(.Add, acc);
+
+    // Scalar remainder
+    while (i < n) : (i += 1) {
+        sum += a[i];
+    }
+
+    return sum;
+}
+
+test "sumV sums correctly" {
+    const a: [6]f64 = .{ 1, 2, 3, 4, 5, 6 };
+
+    const b = sumV(&a);
+    try std.testing.expectEqual(21, b);
+}
+
 pub fn dotProduct(a: []const f64, b: []const f64) f64 {
     std.debug.assert(a.len == b.len);
     const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4; // per-target lane count; fallback 4 (AVX2-ish)
@@ -512,6 +541,332 @@ test "pack -> gram -> factor -> solve recovers OLS coefficients" {
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), beta[0], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), beta[1], 1e-10);
+}
+
+pub fn packRange(columns: []const []const f64, X: []f64, start: usize, end: usize) void {
+    const rows = end - start;
+    std.debug.assert(X.len >= columns.len * rows);
+    for (columns, 0..) |col, j| {
+        std.debug.assert(end <= col.len);
+        @memcpy(X[j * rows .. (j + 1) * rows], col[start..end]);
+    }
+}
+
+test "packRange lays columns end-to-end (column-major)" {
+    const col0 = [_]f64{ 1, 2, 3 };
+    const col1 = [_]f64{ 4, 5, 6 };
+    const cols = [_][]const f64{ &col0, &col1 };
+
+    var X: [4]f64 = undefined;
+    @memset(&X, 0);
+    packRange(&cols, &X, 0, 2);
+
+    const want = [_]f64{ 1, 2, 4, 5 };
+    for (0..4) |i| {
+        try std.testing.expectEqual(want[i], X[i]);
+    }
+}
+
+test "packRange middle window uses block coordinates" {
+    const col0 = [_]f64{ 1, 2, 3 };
+    const col1 = [_]f64{ 4, 5, 6 };
+    const cols = [_][]const f64{ &col0, &col1 };
+
+    var X: [4]f64 = undefined;
+    packRange(&cols, &X, 1, 3); // rows 1..3
+    // destination starts at 0 even though source window didn't
+    const want = [_]f64{ 2, 3, 5, 6 };
+    for (0..4) |i| try std.testing.expectEqual(want[i], X[i]);
+}
+
+test "packRange runt tile packs densely at front of larger scratch" {
+    const col0 = [_]f64{ 1, 2, 3 };
+    const col1 = [_]f64{ 4, 5, 6 };
+    const cols = [_][]const f64{ &col0, &col1 };
+
+    var X: [6]f64 = .{ -1, -1, -1, -1, -1, -1 }; // scratch bigger than block
+    packRange(&cols, &X, 0, 2);
+    const want = [_]f64{ 1, 2, 4, 5 };
+    for (0..4) |i| try std.testing.expectEqual(want[i], X[i]);
+    try std.testing.expectEqual(@as(f64, -1), X[4]); // tail untouched
+    try std.testing.expectEqual(@as(f64, -1), X[5]);
+}
+
+pub const SufficientStats = struct {
+    n: usize,
+    p: usize,
+    sum_x: []f64,
+    sum_y: f64,
+    yty: f64,
+    xty: ?[]f64,
+    gram: ?[]f64,
+};
+
+pub const StatsSpec = struct {
+    gram: bool,
+    xty: bool,
+    moments: bool,
+};
+
+fn allocZeroed(alloc: std.mem.Allocator, n: usize) ![]f64 {
+    const buf = try alloc.alloc(f64, n);
+    @memset(buf, 0);
+    return buf;
+}
+fn accumulateGram(pack: []const f64, rows_blk: usize, p: usize, gram: []f64) void {
+    blas.cblas_dsyrk(
+        .RowMajor,
+        .Upper,
+        .NoTrans,
+        @intCast(p),
+        @intCast(rows_blk),
+        1.0,
+        pack.ptr,
+        @intCast(rows_blk),
+        1.0,
+        gram.ptr,
+        @intCast(p),
+    );
+}
+
+pub const StatsAccumulator = struct {
+    spec: StatsSpec,
+    p: usize,
+    tile_rows: usize,
+    n_seen: usize = 0,
+
+    sum_x: []f64,
+    sum_y: f64 = 0,
+    yty: f64 = 0,
+    xty: ?[]f64,
+    gram: ?[]f64,
+    pack: ?[]f64,
+
+    pub fn init(alloc: std.mem.Allocator, p: usize, spec: StatsSpec) !StatsAccumulator {
+        const tile_rows = @max(64, (256 * 1024 / @sizeOf(f64)) / p);
+
+        const sum_x: []f64 = try allocZeroed(alloc, p);
+        const xty_: ?[]f64 = if (spec.xty) try allocZeroed(alloc, p) else null;
+        const gram: ?[]f64 = if (spec.gram) try allocZeroed(alloc, p * p) else null;
+        const pack: ?[]f64 = if (spec.gram) try allocZeroed(alloc, p * tile_rows) else null;
+
+        return .{
+            .spec = spec,
+            .p = p,
+            .tile_rows = tile_rows,
+            .sum_x = sum_x,
+            .gram = gram,
+            .xty = xty_,
+            .pack = pack,
+        };
+    }
+    pub fn update(self: *StatsAccumulator, columns: []const []const f64, y: []const f64) void {
+        std.debug.assert(columns.len == self.p);
+        const rows = y.len;
+
+        // per-column stats
+        for (columns, 0..) |col, j| {
+            std.debug.assert(col.len == rows);
+            if (self.spec.moments) self.sum_x[j] += sumV(col);
+            if (self.xty) |xt| xt[j] += dotProduct(col, y);
+        }
+
+        // per-chunk stats
+        if (self.spec.moments) {
+            self.sum_y += sumV(y);
+            self.yty += dotProduct(y, y);
+        }
+        if (self.gram) |g| {
+            var start: usize = 0;
+            while (start < rows) : (start += self.tile_rows) {
+                const end = @min(start + self.tile_rows, rows);
+                packRange(columns, self.pack.?, start, end);
+                accumulateGram(self.pack.?, end - start, self.p, g);
+            }
+        }
+        self.n_seen += rows;
+    }
+
+    pub fn finalize(self: *StatsAccumulator) SufficientStats {
+        std.debug.assert(self.n_seen > 0);
+        const n_f: f64 = @floatFromInt(self.n_seen);
+
+        if (self.gram) |g| {
+            for (0..self.p) |i| {
+                for (i..self.p) |j| {
+                    const v = g[i * self.p + j] / n_f;
+                    g[i * self.p + j] = v;
+                    g[j * self.p + i] = v;
+                }
+            }
+        }
+        if (self.xty) |xt| {
+            for (xt) |*v| v.* /= n_f;
+        }
+
+        return .{
+            .n = self.n_seen,
+            .p = self.p,
+            .sum_x = self.sum_x,
+            .sum_y = self.sum_y,
+            .yty = self.yty,
+            .xty = self.xty,
+            .gram = self.gram,
+        };
+    }
+};
+
+test "StatsAccumulator: two uneven chunks match one-shot computation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const n = 100;
+    const p = 3;
+    const data = fixtures.sinCos(n).init();
+    const cols = [_][]const f64{ &data.x1, &data.x2, &data.x3 };
+
+    // --- reference: one-shot over the full data ---
+    var X: [n * p]f64 = undefined;
+    packX(&cols, &X, n);
+
+    var gram_ref: [p * p]f64 = undefined;
+    gramMatrix(&X, n, p, &gram_ref); // X'X / n
+
+    var xty_ref: [p]f64 = undefined;
+    xty(&X, &data.y, n, p, &xty_ref); // X'y / n
+
+    var sum_x_ref: [p]f64 = .{ 0, 0, 0 };
+    var sum_y_ref: f64 = 0;
+    var yty_ref: f64 = 0;
+    for (0..n) |i| {
+        for (0..p) |j| sum_x_ref[j] += cols[j][i];
+        sum_y_ref += data.y[i];
+        yty_ref += data.y[i] * data.y[i];
+    }
+
+    // --- accumulated: same data, two uneven chunks, tiny tiles ---
+    var acc = try StatsAccumulator.init(alloc, p, .{
+        .gram = true,
+        .xty = true,
+        .moments = true,
+    });
+    acc.tile_rows = 7; // force runt (37 = 5*7+2) and exact (63 = 9*7) tile paths
+
+    const split = 37;
+    const cols_a = [_][]const f64{ data.x1[0..split], data.x2[0..split], data.x3[0..split] };
+    const cols_b = [_][]const f64{ data.x1[split..], data.x2[split..], data.x3[split..] };
+
+    acc.update(&cols_a, data.y[0..split]);
+    acc.update(&cols_b, data.y[split..]);
+    const stats = acc.finalize();
+
+    // --- identity checks ---
+    try std.testing.expectEqual(@as(usize, n), stats.n);
+    try std.testing.expectEqual(@as(usize, p), stats.p);
+
+    // gram/xty: normalized by n on both sides; tolerance covers the
+    // different summation order (tiled dsyrk vs one-shot)
+    for (0..p * p) |i| {
+        try std.testing.expectApproxEqAbs(gram_ref[i], stats.gram.?[i], 1e-9);
+    }
+    for (0..p) |j| {
+        try std.testing.expectApproxEqAbs(xty_ref[j], stats.xty.?[j], 1e-9);
+    }
+
+    // moments: RAW by convention (consumers divide)
+    for (0..p) |j| {
+        try std.testing.expectApproxEqAbs(sum_x_ref[j], stats.sum_x[j], 1e-9);
+    }
+    try std.testing.expectApproxEqAbs(sum_y_ref, stats.sum_y, 1e-9);
+    try std.testing.expectApproxEqAbs(yty_ref, stats.yty, 1e-9);
+}
+
+test "StatsAccumulator: two even chunks match one-shot computation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const n = 100;
+    const p = 3;
+    const data = fixtures.sinCos(n).init();
+    const cols = [_][]const f64{ &data.x1, &data.x2, &data.x3 };
+
+    // --- reference: one-shot over the full data ---
+    var X: [n * p]f64 = undefined;
+    packX(&cols, &X, n);
+
+    var gram_ref: [p * p]f64 = undefined;
+    gramMatrix(&X, n, p, &gram_ref); // X'X / n
+
+    var xty_ref: [p]f64 = undefined;
+    xty(&X, &data.y, n, p, &xty_ref); // X'y / n
+
+    var sum_x_ref: [p]f64 = .{ 0, 0, 0 };
+    var sum_y_ref: f64 = 0;
+    var yty_ref: f64 = 0;
+    for (0..n) |i| {
+        for (0..p) |j| sum_x_ref[j] += cols[j][i];
+        sum_y_ref += data.y[i];
+        yty_ref += data.y[i] * data.y[i];
+    }
+
+    // --- accumulated: same data, two even chunks, tiny tiles ---
+    var acc = try StatsAccumulator.init(alloc, p, .{
+        .gram = true,
+        .xty = true,
+        .moments = true,
+    });
+    acc.tile_rows = 10;
+
+    const split = 50;
+    const cols_a = [_][]const f64{ data.x1[0..split], data.x2[0..split], data.x3[0..split] };
+    const cols_b = [_][]const f64{ data.x1[split..], data.x2[split..], data.x3[split..] };
+
+    acc.update(&cols_a, data.y[0..split]);
+    acc.update(&cols_b, data.y[split..]);
+    const stats = acc.finalize();
+
+    // --- identity checks ---
+    try std.testing.expectEqual(@as(usize, n), stats.n);
+    try std.testing.expectEqual(@as(usize, p), stats.p);
+
+    // gram/xty: normalized by n on both sides; tolerance covers the
+    // different summation order (tiled dsyrk vs one-shot)
+    for (0..p * p) |i| {
+        try std.testing.expectApproxEqAbs(gram_ref[i], stats.gram.?[i], 1e-9);
+    }
+    for (0..p) |j| {
+        try std.testing.expectApproxEqAbs(xty_ref[j], stats.xty.?[j], 1e-9);
+    }
+
+    // moments: RAW by convention (consumers divide)
+    for (0..p) |j| {
+        try std.testing.expectApproxEqAbs(sum_x_ref[j], stats.sum_x[j], 1e-9);
+    }
+    try std.testing.expectApproxEqAbs(sum_y_ref, stats.sum_y, 1e-9);
+    try std.testing.expectApproxEqAbs(yty_ref, stats.yty, 1e-9);
+}
+
+test "StatsAccumulator: spec flags off mean null, not garbage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const data = fixtures.sinCos(20).init();
+    const cols = [_][]const f64{ &data.x1, &data.x2, &data.x3 };
+
+    var acc = try StatsAccumulator.init(alloc, 3, .{
+        .gram = false,
+        .xty = true,
+        .moments = false,
+    });
+    acc.update(&cols, &data.y);
+    const stats = acc.finalize();
+
+    try std.testing.expectEqual(@as(?[]f64, null), stats.gram);
+    try std.testing.expect(stats.xty != null);
+    try std.testing.expectEqual(@as(usize, 20), stats.n);
 }
 
 test {
