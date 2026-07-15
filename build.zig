@@ -43,7 +43,11 @@ pub fn build(b: *std.Build) void {
 
     blas_module.linkSystemLibrary("openblas", .{ .use_pkg_config = .yes });
 
-    const lib_tests = b.addTest(.{ .root_module = lib_module });
+    const lib_tests = b.addTest(.{
+        .root_module = lib_module,
+        .use_llvm = true, // currently non-llvm build fail to pass through ctypes correctly see https://codeberg.org/ziglang/zig/issues/36038
+
+    });
 
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
