@@ -663,6 +663,12 @@ test "pack -> gram -> factor -> solve recovers OLS coefficients" {
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), beta[1], 1e-10);
 }
 
+pub fn packColRange(slice: []const f64, pack: []f64, t_rows: usize, j: usize) void {
+    std.debug.assert(slice.len == t_rows);
+    std.debug.assert(pack.len >= (j + 1) * t_rows);
+    @memcpy(pack[j * t_rows .. (j + 1) * t_rows], slice);
+}
+
 pub fn packRange(columns: []const []const f64, X: []f64, start: usize, end: usize) void {
     const rows = end - start;
     std.debug.assert(X.len >= columns.len * rows);
@@ -787,27 +793,31 @@ pub const StatsAccumulator = struct {
         std.debug.assert(columns.len == self.p);
         const rows = y.len;
 
-        // per-column stats
-        for (columns, 0..) |col, j| {
-            std.debug.assert(col.len == rows);
-            const m = sumAndSumSq(col);
-            self.sum_x[j] += m.sum;
-            self.sum_xx[j] += m.sum_sq;
+        var start: usize = 0;
 
-            if (self.xty) |xt| xt[j] += dotProduct(col, y);
-        }
+        while (start < rows) : (start += self.tile_rows) {
+            const end = @min(start + self.tile_rows, rows);
+            const t_rows = end - start;
+            const y_t = y[start..end];
+            // per-column stats
+            for (columns, 0..) |col, j| {
+                std.debug.assert(col.len == rows);
+                const col_slice = col[start..end];
 
-        // per-chunk stats
-        self.sum_y += sumV(y);
-        self.yty += dotProduct(y, y);
+                const m = sumAndSumSq(col_slice);
+                self.sum_x[j] += m.sum;
+                self.sum_xx[j] += m.sum_sq;
 
-        if (self.gram) |g| {
-            var start: usize = 0;
-            while (start < rows) : (start += self.tile_rows) {
-                const end = @min(start + self.tile_rows, rows);
-                packRange(columns, self.pack.?, start, end);
-                accumulateGram(self.pack.?, end - start, self.p, g);
+                if (self.xty) |xt| xt[j] += dotProduct(col_slice, y_t);
+
+                if (self.gram != null) packColRange(col_slice, self.pack.?, t_rows, j);
             }
+
+            // per-tile stats
+            self.sum_y += sumV(y_t);
+            self.yty += dotProduct(y_t, y_t);
+
+            if (self.gram) |g| accumulateGram(self.pack.?, end - start, self.p, g);
         }
         self.n_seen += rows;
     }

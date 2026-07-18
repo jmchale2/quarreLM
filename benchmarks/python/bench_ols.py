@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import statsmodels.api as sm
 from sklearn.linear_model import LinearRegression
@@ -29,7 +30,7 @@ def generate_data(n, p, seed=42):
     data = {"y": y}
     for i in range(p):
         data[f"x{i}"] = X[:, i]
-    return pl.DataFrame(data), X, y
+    return pl.DataFrame(data), pd.DataFrame(data), X, y
 
 
 def bench(fn, *args, warmup=3, runs=20, label=""):
@@ -106,19 +107,22 @@ def run_suite(n, p, runs=20):
     print(f"  n={n:,}  p={p}  (X: {n * p * 8 / 1e6:.1f} MB)")
     print(f"{'=' * 74}")
 
-    df, X, y = generate_data(n, p)
+    df_pl, df_pd, X, y = generate_data(n, p)
 
     print("\n  Correctness (vs numpy lstsq):")
-    check_correctness(df, X, y)
+    check_correctness(df_pl, X, y)
 
     print("\n  End-to-end (data in -> coefficients out):")
     t_np = bench(fit_numpy, X, y, runs=runs, label="numpy lstsq (numpy)")
     t_ne = bench(fit_normal_eq, X, y, runs=runs, label="normal eq dposv (numpy)")
     t_sk = bench(fit_sklearn, X, y, runs=runs, label="sklearn (numpy)")
     t_sm = bench(fit_statsmodels, X, y, runs=runs, label="statsmodels (numpy)")
-    t_ge = bench(fit_quarrelm_ge, df, runs=runs, label="quarreLM GE (polars)")
+    t_ge = bench(fit_quarrelm_ge, df_pl, runs=runs, label="quarreLM GE (polars)")
     t_ch = bench(
-        fit_quarrelm_cholesky, df, runs=runs, label="quarreLM cholesky (polars)"
+        fit_quarrelm_cholesky, df_pl, runs=runs, label="quarreLM cholesky (polars)"
+    )
+    t_cp = bench(
+        fit_quarrelm_cholesky, df_pd, runs=runs, label="quarreLM cholesky (pandas)"
     )
 
     print("\n  Speedups:")
@@ -127,6 +131,7 @@ def run_suite(n, p, runs=20):
     print(f"    cholesky vs statsmodels: {t_sm / t_ch:6.2f}x")
     print(f"    cholesky vs numpy lstsq: {t_np / t_ch:6.2f}x")
     print(f"    cholesky vs normal eq:   {t_ne / t_ch:6.2f}x")
+    print(f"    choleskypd vs normal eq: {t_cp / t_ch:6.2f}x")
 
 
 if __name__ == "__main__":
