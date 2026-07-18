@@ -243,6 +243,8 @@ pub const FitOptions = struct {
     upper_bounds: ?[*]const f64,
     warm_start: ?[*]const f64,
     ols_method: OLSMethod = OLSMethod.auto,
+
+    //TODO: FitOptions.validate() should validate all parameters are legal
 };
 
 pub const FitResult = struct {
@@ -280,7 +282,7 @@ pub fn fit(
     defer ing.deinit();
 
     if (ing.table != null) {
-        if (y.len != ing.table.?.n_rows) return errors.QError.StreamError;
+        if (y.len != ing.table.?.n_rows) return errors.QError.DimensionMismatch;
     }
     var regopts: regression.SolverOptions = undefined;
     switch (solver_enum) {
@@ -305,7 +307,16 @@ pub fn fit(
                 .tol = opts.tol,
             } };
         },
-        .enet_path => return errors.QError.ParameterError,
+
+        .enet_path => {
+            // foreign callers should be told they have made the wrong call
+            errors.setContext(
+                "bridge.fit recieved solver {s}: {d}, which is a single fit solver, use quarrel_fit ",
+
+                .{ @tagName(solver_enum), @intFromEnum(solver_enum) },
+            );
+            return errors.QError.WrongAPICall;
+        },
     }
 
     const cols: ?[]const []const f64 = if (ing.table) |t| t.columns else null;
@@ -345,14 +356,24 @@ pub fn fit_path(
     defer ing.deinit();
 
     if (ing.table != null) {
-        if (y.len != ing.table.?.n_rows) return errors.QError.StreamError;
+        if (y.len != ing.table.?.n_rows) return errors.QError.DimensionMismatch;
     }
 
     switch (solver_enum) {
         .ols => {
+            // foreign callers should be told they have made the wrong call
+            errors.setContext(
+                "bridge.fitPath recieved solver {s}: {d}, which is a single fit solver, use quarrel_fit ",
+                .{ @tagName(solver_enum), @intFromEnum(solver_enum) },
+            );
             return errors.QError.WrongAPICall;
         },
         .enet => {
+            // foreign callers should be told they have made the wrong call
+            errors.setContext(
+                "bridge.fitPath recieved solver {s}: {d}, which is a single fit solver, use quarrel_fit ",
+                .{ @tagName(solver_enum), @intFromEnum(solver_enum) },
+            );
             return errors.QError.WrongAPICall;
         },
         .enet_path => {

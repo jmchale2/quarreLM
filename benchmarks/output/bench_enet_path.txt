@@ -13,11 +13,11 @@ machine: x86_64
   True nonzero coefficients: 5/10
 
   End-to-end (data in -> coefficient path out):
-  sklearn lasso_path (100λ, numpy)          median=    2.219ms  best=    2.197ms  worst=    2.247ms
-  quarreLM enet_path (100λ, polars)         median=    0.221ms  best=    0.208ms  worst=    0.338ms
+  sklearn lasso_path (100λ, numpy)          median=    2.228ms  best=    2.210ms  worst=    2.256ms
+  quarreLM enet_path (100λ, polars)         median=    0.219ms  best=    0.210ms  worst=    0.237ms
 
   Speedups:
-    quarreLM vs sklearn:   10.05x
+    quarreLM vs sklearn:   10.18x
   Path stats: 199 total iters, 2.0 avg per λ
 
 ========================================================================================
@@ -26,11 +26,11 @@ machine: x86_64
   True nonzero coefficients: 25/50
 
   End-to-end (data in -> coefficient path out):
-  sklearn lasso_path (100λ, numpy)          median=    3.250ms  best=    3.220ms  worst=    3.335ms
-  quarreLM enet_path (100λ, polars)         median=    2.171ms  best=    2.153ms  worst=    2.250ms
+  sklearn lasso_path (100λ, numpy)          median=    3.284ms  best=    3.235ms  worst=    4.150ms
+  quarreLM enet_path (100λ, polars)         median=    2.099ms  best=    2.077ms  worst=    2.179ms
 
   Speedups:
-    quarreLM vs sklearn:    1.50x
+    quarreLM vs sklearn:    1.56x
   Path stats: 217 total iters, 2.2 avg per λ
 
 ========================================================================================
@@ -39,11 +39,11 @@ machine: x86_64
   True nonzero coefficients: 50/100
 
   End-to-end (data in -> coefficient path out):
-  sklearn lasso_path (100λ, numpy)          median=   29.769ms  best=   29.078ms  worst=   30.805ms
-  quarreLM enet_path (100λ, polars)         median=   64.059ms  best=   63.457ms  worst=   64.388ms
+  sklearn lasso_path (100λ, numpy)          median=   30.556ms  best=   28.517ms  worst=   32.765ms
+  quarreLM enet_path (100λ, polars)         median=   59.887ms  best=   59.211ms  worst=   60.714ms
 
   Speedups:
-    quarreLM vs sklearn:    0.46x
+    quarreLM vs sklearn:    0.51x
   Path stats: 224 total iters, 2.2 avg per λ
 
 ========================================================================================
@@ -52,11 +52,11 @@ machine: x86_64
   True nonzero coefficients: 250/500
 
   End-to-end (data in -> coefficient path out):
-  sklearn lasso_path (100λ, numpy)          median=   32.393ms  best=   31.436ms  worst=   33.805ms
-  quarreLM enet_path (100λ, polars)         median=   27.724ms  best=   27.565ms  worst=   27.802ms
+  sklearn lasso_path (100λ, numpy)          median=   26.683ms  best=   26.564ms  worst=   29.627ms
+  quarreLM enet_path (100λ, polars)         median=   27.462ms  best=   27.361ms  worst=   29.214ms
 
   Speedups:
-    quarreLM vs sklearn:    1.17x
+    quarreLM vs sklearn:    0.97x
   Path stats: 635 total iters, 6.3 avg per λ
 
 ========================================================================================
@@ -65,8 +65,8 @@ machine: x86_64
   True nonzero coefficients: 250/500
 
   End-to-end (data in -> coefficient path out):
-  sklearn lasso_path (100λ, numpy)          median=  136.941ms  best=  132.820ms  worst=  147.173ms
-  quarreLM enet_path (100λ, polars)         median= 2402.583ms  best= 2394.771ms  worst= 2414.133ms
+  sklearn lasso_path (100λ, numpy)          median=  138.352ms  best=  133.878ms  worst=  148.234ms
+  quarreLM enet_path (100λ, polars)         median= 2326.631ms  best= 2320.869ms  worst= 2334.370ms
 
   Speedups:
     quarreLM vs sklearn:    0.06x
@@ -78,11 +78,11 @@ machine: x86_64
   True nonzero coefficients: 2500/5000
 
   End-to-end (data in -> coefficient path out):
-  sklearn lasso_path (100λ, numpy)          median=25744.214ms  best=25708.427ms  worst=25815.949ms
-  quarreLM enet_path (100λ, polars)         median=  103.639ms  best=  102.063ms  worst=  126.416ms
+  sklearn lasso_path (100λ, numpy)          median=25287.519ms  best=25231.591ms  worst=25464.077ms
+  quarreLM enet_path (100λ, polars)         median=  103.304ms  best=  102.424ms  worst=  126.597ms
 
   Speedups:
-    quarreLM vs sklearn:  248.40x
+    quarreLM vs sklearn:  244.79x
   Path stats: 4956 total iters, 49.6 avg per λ
 
 ========================================================================================
@@ -95,11 +95,11 @@ machine: x86_64
   True nonzero coefficients: 5/10
 
   End-to-end (data in -> coefficient path out):
-  sklearn enet_path (100λ, numpy)           median=    2.204ms  best=    2.189ms  worst=    2.239ms
-  quarreLM enet_path (100λ, polars)         median=    0.217ms  best=    0.204ms  worst=    0.430ms
+  sklearn enet_path (100λ, numpy)           median=    2.222ms  best=    2.176ms  worst=    2.242ms
+  quarreLM enet_path (100λ, polars)         median=    0.222ms  best=    0.200ms  worst=    0.313ms
 
   Speedups:
-    quarreLM vs sklearn:   10.16x
+    quarreLM vs sklearn:   10.02x
   Path stats: 215 total iters, 2.1 avg per λ
 
 ========================================================================================
@@ -108,11 +108,11 @@ machine: x86_64
   True nonzero coefficients: 25/50
 
   End-to-end (data in -> coefficient path out):
-  sklearn enet_path (100λ, numpy)           median=    4.401ms  best=    3.194ms  worst=   24.447ms
-  quarreLM enet_path (100λ, polars)         median=    2.191ms  best=    2.168ms  worst=    2.335ms
+  sklearn enet_path (100λ, numpy)           median=    3.260ms  best=    3.245ms  worst=    3.358ms
+  quarreLM enet_path (100λ, polars)         median=    2.181ms  best=    2.141ms  worst=    2.590ms
 
   Speedups:
-    quarreLM vs sklearn:    2.01x
+    quarreLM vs sklearn:    1.50x
   Path stats: 227 total iters, 2.3 avg per λ
 
 ========================================================================================
@@ -121,11 +121,11 @@ machine: x86_64
   True nonzero coefficients: 50/100
 
   End-to-end (data in -> coefficient path out):
-  sklearn enet_path (100λ, numpy)           median=   30.093ms  best=   29.301ms  worst=   35.866ms
-  quarreLM enet_path (100λ, polars)         median=   64.002ms  best=   63.549ms  worst=   64.807ms
+  sklearn enet_path (100λ, numpy)           median=   29.067ms  best=   28.535ms  worst=   30.244ms
+  quarreLM enet_path (100λ, polars)         median=   63.618ms  best=   62.975ms  worst=   66.424ms
 
   Speedups:
-    quarreLM vs sklearn:    0.47x
+    quarreLM vs sklearn:    0.46x
   Path stats: 227 total iters, 2.3 avg per λ
 
 ========================================================================================
@@ -134,11 +134,11 @@ machine: x86_64
   True nonzero coefficients: 250/500
 
   End-to-end (data in -> coefficient path out):
-  sklearn enet_path (100λ, numpy)           median=   37.785ms  best=   37.087ms  worst=   38.438ms
-  quarreLM enet_path (100λ, polars)         median=   34.419ms  best=   34.150ms  worst=   34.758ms
+  sklearn enet_path (100λ, numpy)           median=   32.584ms  best=   32.079ms  worst=   33.432ms
+  quarreLM enet_path (100λ, polars)         median=   33.327ms  best=   33.210ms  worst=   33.961ms
 
   Speedups:
-    quarreLM vs sklearn:    1.10x
+    quarreLM vs sklearn:    0.98x
   Path stats: 657 total iters, 6.6 avg per λ
 
 ========================================================================================
@@ -147,11 +147,11 @@ machine: x86_64
   True nonzero coefficients: 250/500
 
   End-to-end (data in -> coefficient path out):
-  sklearn enet_path (100λ, numpy)           median=  139.443ms  best=  135.555ms  worst=  148.638ms
-  quarreLM enet_path (100λ, polars)         median= 2420.025ms  best= 2414.321ms  worst= 2425.752ms
+  sklearn enet_path (100λ, numpy)           median=  136.086ms  best=  131.757ms  worst=  145.064ms
+  quarreLM enet_path (100λ, polars)         median= 2475.203ms  best= 2471.858ms  worst= 2476.558ms
 
   Speedups:
-    quarreLM vs sklearn:    0.06x
+    quarreLM vs sklearn:    0.05x
   Path stats: 293 total iters, 2.9 avg per λ
 
 ========================================================================================
@@ -160,9 +160,177 @@ machine: x86_64
   True nonzero coefficients: 2500/5000
 
   End-to-end (data in -> coefficient path out):
-  sklearn enet_path (100λ, numpy)           median=10453.587ms  best=10431.713ms  worst=10510.741ms
-  quarreLM enet_path (100λ, polars)         median=  129.548ms  best=  127.963ms  worst=  151.563ms
+  sklearn enet_path (100λ, numpy)           median=12267.410ms  best=12211.545ms  worst=12418.144ms
+  quarreLM enet_path (100λ, polars)         median=  129.174ms  best=  127.776ms  worst=  151.738ms
 
   Speedups:
-    quarreLM vs sklearn:   80.69x
+    quarreLM vs sklearn:   94.97x
   Path stats: 1600 total iters, 16.0 avg per λ
+quarreLM elastic-net PATH benchmark — 2026-07-18
+quarreLM build: v0.2.0-9-geef79cb-dirty:optim-ReleaseFast
+python 3.13.12  numpy 2.5.1  sklearn 1.9.0
+machine: x86_64
+
+========================================================================================
+  LASSO PATH BENCHMARKS (alpha=1.0)
+========================================================================================
+
+========================================================================================
+  n=1,000  p=10  lasso  100 lambdas  (X: 0.1 MB)
+========================================================================================
+  True nonzero coefficients: 5/10
+
+  End-to-end (data in -> coefficient path out):
+  sklearn lasso_path (100λ, numpy)          median=    2.234ms  best=    2.206ms  worst=    2.323ms
+  quarreLM enet_path (100λ, polars)         median=    0.261ms  best=    0.249ms  worst=    0.279ms
+
+  Speedups:
+    quarreLM vs sklearn:    8.58x
+  Path stats: 199 total iters, 2.0 avg per λ
+
+========================================================================================
+  n=10,000  p=50  lasso  100 lambdas  (X: 4.0 MB)
+========================================================================================
+  True nonzero coefficients: 25/50
+
+  End-to-end (data in -> coefficient path out):
+  sklearn lasso_path (100λ, numpy)          median=    3.341ms  best=    3.320ms  worst=    3.373ms
+  quarreLM enet_path (100λ, polars)         median=    1.324ms  best=    1.300ms  worst=    1.438ms
+
+  Speedups:
+    quarreLM vs sklearn:    2.52x
+  Path stats: 217 total iters, 2.2 avg per λ
+
+========================================================================================
+  n=100,000  p=100  lasso  100 lambdas  (X: 80.0 MB)
+========================================================================================
+  True nonzero coefficients: 50/100
+
+  End-to-end (data in -> coefficient path out):
+  sklearn lasso_path (100λ, numpy)          median=   28.939ms  best=   28.496ms  worst=   29.915ms
+  quarreLM enet_path (100λ, polars)         median=   17.777ms  best=   17.602ms  worst=   18.285ms
+
+  Speedups:
+    quarreLM vs sklearn:    1.63x
+  Path stats: 224 total iters, 2.2 avg per λ
+
+========================================================================================
+  n=1,000  p=500  lasso  100 lambdas  (X: 4.0 MB)
+========================================================================================
+  True nonzero coefficients: 250/500
+
+  End-to-end (data in -> coefficient path out):
+  sklearn lasso_path (100λ, numpy)          median=   28.970ms  best=   28.898ms  worst=   29.484ms
+  quarreLM enet_path (100λ, polars)         median=   38.976ms  best=   38.703ms  worst=   42.798ms
+
+  Speedups:
+    quarreLM vs sklearn:    0.74x
+  Path stats: 635 total iters, 6.3 avg per λ
+
+========================================================================================
+  n=100,000  p=500  lasso  100 lambdas  (X: 400.0 MB)
+========================================================================================
+  True nonzero coefficients: 250/500
+
+  End-to-end (data in -> coefficient path out):
+  sklearn lasso_path (100λ, numpy)          median=  137.013ms  best=  133.827ms  worst=  143.769ms
+  quarreLM enet_path (100λ, polars)         median=  106.024ms  best=  103.990ms  worst=  109.334ms
+
+  Speedups:
+    quarreLM vs sklearn:    1.29x
+  Path stats: 294 total iters, 2.9 avg per λ
+
+========================================================================================
+  n=200  p=5000  lasso  100 lambdas  (X: 8.0 MB)
+========================================================================================
+  True nonzero coefficients: 2500/5000
+
+  End-to-end (data in -> coefficient path out):
+  sklearn lasso_path (100λ, numpy)          median=25341.570ms  best=25254.336ms  worst=25564.614ms
+  quarreLM enet_path (100λ, polars)         median=  103.945ms  best=  103.146ms  worst=  125.505ms
+
+  Speedups:
+    quarreLM vs sklearn:  243.80x
+  Path stats: 4956 total iters, 49.6 avg per λ
+
+========================================================================================
+  ELASTIC NET PATH BENCHMARKS (alpha=0.5)
+========================================================================================
+
+========================================================================================
+  n=1,000  p=10  enet(α=0.5)  100 lambdas  (X: 0.1 MB)
+========================================================================================
+  True nonzero coefficients: 5/10
+
+  End-to-end (data in -> coefficient path out):
+  sklearn enet_path (100λ, numpy)           median=    2.243ms  best=    2.226ms  worst=    2.276ms
+  quarreLM enet_path (100λ, polars)         median=    0.301ms  best=    0.243ms  worst=    0.550ms
+
+  Speedups:
+    quarreLM vs sklearn:    7.45x
+  Path stats: 215 total iters, 2.1 avg per λ
+
+========================================================================================
+  n=10,000  p=50  enet(α=0.5)  100 lambdas  (X: 4.0 MB)
+========================================================================================
+  True nonzero coefficients: 25/50
+
+  End-to-end (data in -> coefficient path out):
+  sklearn enet_path (100λ, numpy)           median=    3.244ms  best=    3.230ms  worst=    3.490ms
+  quarreLM enet_path (100λ, polars)         median=    1.300ms  best=    1.285ms  worst=    1.321ms
+
+  Speedups:
+    quarreLM vs sklearn:    2.49x
+  Path stats: 227 total iters, 2.3 avg per λ
+
+========================================================================================
+  n=100,000  p=100  enet(α=0.5)  100 lambdas  (X: 80.0 MB)
+========================================================================================
+  True nonzero coefficients: 50/100
+
+  End-to-end (data in -> coefficient path out):
+  sklearn enet_path (100λ, numpy)           median=   28.903ms  best=   28.469ms  worst=   33.111ms
+  quarreLM enet_path (100λ, polars)         median=   17.746ms  best=   17.404ms  worst=   18.402ms
+
+  Speedups:
+    quarreLM vs sklearn:    1.63x
+  Path stats: 227 total iters, 2.3 avg per λ
+
+========================================================================================
+  n=1,000  p=500  enet(α=0.5)  100 lambdas  (X: 4.0 MB)
+========================================================================================
+  True nonzero coefficients: 250/500
+
+  End-to-end (data in -> coefficient path out):
+  sklearn enet_path (100λ, numpy)           median=   38.301ms  best=   38.270ms  worst=   38.731ms
+  quarreLM enet_path (100λ, polars)         median=   47.637ms  best=   47.301ms  worst=   54.538ms
+
+  Speedups:
+    quarreLM vs sklearn:    0.80x
+  Path stats: 657 total iters, 6.6 avg per λ
+
+========================================================================================
+  n=100,000  p=500  enet(α=0.5)  100 lambdas  (X: 400.0 MB)
+========================================================================================
+  True nonzero coefficients: 250/500
+
+  End-to-end (data in -> coefficient path out):
+  sklearn enet_path (100λ, numpy)           median=  136.867ms  best=  134.835ms  worst=  142.725ms
+  quarreLM enet_path (100λ, polars)         median=  105.823ms  best=  100.227ms  worst=  152.268ms
+
+  Speedups:
+    quarreLM vs sklearn:    1.29x
+  Path stats: 293 total iters, 2.9 avg per λ
+
+========================================================================================
+  n=200  p=5000  enet(α=0.5)  100 lambdas  (X: 8.0 MB)
+========================================================================================
+  True nonzero coefficients: 2500/5000
+
+  End-to-end (data in -> coefficient path out):
+  sklearn enet_path (100λ, numpy)           median=12113.138ms  best=12074.119ms  worst=12248.065ms
+  quarreLM enet_path (100λ, polars)         median=  133.073ms  best=  131.270ms  worst=  154.963ms
+
+  Speedups:
+    quarreLM vs sklearn:   91.03x
+  Path stats: 1599 total iters, 16.0 avg per λ
