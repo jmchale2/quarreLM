@@ -131,6 +131,7 @@ if __name__ == "__main__":
     run_suite(n=100_000, p=100, alpha=1.0, n_lambda=100)
     run_suite(n=1_000, p=500, alpha=1.0, n_lambda=100)
     run_suite(n=100_000, p=500, alpha=1.0, n_lambda=100)
+    run_suite(n=200, p=5000, alpha=1.0, n_lambda=100)
 
     print("\n" + "=" * 88)
     print("  ELASTIC NET PATH BENCHMARKS (alpha=0.5)")
@@ -140,3 +141,4 @@ if __name__ == "__main__":
     run_suite(n=100_000, p=100, alpha=0.5, n_lambda=100)
     run_suite(n=1_000, p=500, alpha=0.5, n_lambda=100)
     run_suite(n=100_000, p=500, alpha=0.5, n_lambda=100)
+    run_suite(n=200, p=5000, alpha=0.5, n_lambda=100)

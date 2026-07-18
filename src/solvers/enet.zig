@@ -31,7 +31,7 @@ pub const PathOptions = struct {
     lower_bounds: []const f64,
     upper_bounds: []const f64,
     n_lambda: usize,
-    lambda_min_ratio: f64, // 1e-4 if n>=p, 1e-2 if n<p
+    lambda_min_ratio: ?f64, // 1e-4 if n>=p, 1e-2 if n<p
     warm_start: ?[]const f64 = null,
     max_iter: usize = 10_000,
     tol: f64 = 1e-7,
@@ -242,7 +242,6 @@ pub fn path(
     alloc: std.mem.Allocator,
     columns: []const []const f64,
     y: []const f64,
-    //outputs, px n_lamba
     out_coefs_matrix: []f64, // coef j, offset at lambda k = [j*n_lambda + k]
     lambdas: []const f64,
     out_iters: []u64,
@@ -256,7 +255,10 @@ pub fn path(
     const coefs = try alloc.alloc(f64, p);
 
     if (regopts.warm_start) |w| {
-        if (w.len != p) return error.DimensionMismatch;
+        if (w.len != p) {
+            errors.setContext("enet.path warmstart lengths don't match p warm_start.len={d}, p={d}'", .{ w.len, p });
+            return errors.QError.DimensionMismatch;
+        }
         @memcpy(coefs, w);
     } else {
         @memset(coefs, 0);
@@ -266,29 +268,6 @@ pub fn path(
     const col_norms_squared = try alloc.alloc(f64, p);
     for (0..p) |j| {
         col_norms_squared[j] = dotProduct(columns[j], columns[j]) / n_f;
-    }
-
-    //tunable p breakpoint
-    const p_breakpoint: usize = GRAM_P_THRESHOLD;
-    const n_breakpoint: usize = p;
-    const use_gram = n > n_breakpoint and p < p_breakpoint;
-    var gram: ?[]f64 = null;
-    var xty: ?[]f64 = null;
-
-    if (use_gram) {
-        gram = try alloc.alloc(f64, p * p);
-        for (0..p) |i| {
-            for (i..p) |j| {
-                const dot = dotProduct(columns[i], columns[j]);
-                gram.?[i * p + j] = dot / n_f;
-                gram.?[j * p + i] = dot / n_f;
-            }
-        }
-
-        xty = try alloc.alloc(f64, p);
-        for (0..p) |j| {
-            xty.?[j] = dotProduct(columns[j], y) / n_f;
-        }
     }
 
     // Persistent residual
@@ -311,12 +290,7 @@ pub fn path(
             active[j] = coefs[j] != 0.0;
         }
 
-        var inputs: CdInputs = undefined;
-        if (use_gram) {
-            inputs = .{ .gram = .{ .gram = gram.?, .xty = xty.? } };
-        } else {
-            inputs = .{ .naive = .{ .columns = columns, .r = r } };
-        }
+        const inputs: CdInputs = .{ .naive = .{ .columns = columns, .r = r } };
 
         const iters = fitInner(inputs, coefs, col_norms_squared, active, .{
             .lambda = lambdas[k],
@@ -336,6 +310,78 @@ pub fn path(
         }
     }
     return total_iters;
+}
+
+pub fn pathGram(
+    alloc: std.mem.Allocator,
+    out_coefs_matrix: []f64, // coef j, offset at lambda k = [j*n_lambda + k]
+    lambdas: []const f64,
+    out_iters: []u64,
+    regopts: PathOptions,
+    stats: SufficientStats,
+) !usize {
+    const p = stats.p;
+    // const n = stats.n; // required when standardization happens
+
+    const gram = stats.gram orelse {
+        errors.setContext("pathGram requires  stats.gram.", .{});
+        return errors.QError.ParameterError;
+    };
+
+    const xty = stats.xty orelse {
+        errors.setContext("pathGram requires  stats.xty.", .{});
+        return errors.QError.ParameterError;
+    };
+
+    //path loop, warm starts
+    const coefs = try alloc.alloc(f64, p);
+
+    if (regopts.warm_start) |w| {
+        if (w.len != p) {
+            errors.setContext("enet.pathGram warmstart lengths don't match p warm_start.len={d}, p={d}", .{ w.len, p });
+            return errors.QError.DimensionMismatch;
+        }
+        @memcpy(coefs, w);
+    } else {
+        @memset(coefs, 0);
+    }
+
+    var col_norms_squared = try alloc.alloc(f64, p);
+    for (0..p) |j| col_norms_squared[j] = gram[j * p + j];
+
+    const active = try alloc.alloc(bool, p);
+
+    var total_iters: usize = 0;
+    for (0..regopts.n_lambda) |k| {
+        // Initialize active from current warm start
+        for (0..p) |j| {
+            active[j] = coefs[j] != 0.0;
+        }
+
+        const inputs: CdInputs = .{ .gram = .{ .gram = gram, .xty = xty } };
+
+        const iters = fitInner(inputs, coefs, col_norms_squared, active, .{
+            .lambda = lambdas[k],
+            .alpha = regopts.alpha,
+            .penalty_factors = regopts.penalty_factors,
+            .lower_bounds = regopts.lower_bounds,
+            .upper_bounds = regopts.upper_bounds,
+            .max_iter = regopts.max_iter,
+            .tol = regopts.tol,
+        });
+        out_iters[k] = iters;
+
+        total_iters += iters;
+
+        for (0..p) |j| {
+            out_coefs_matrix[j * regopts.n_lambda + k] = coefs[j];
+        }
+    }
+    return total_iters;
+}
+
+test {
+    _ = &pathGram;
 }
 
 // fit tests

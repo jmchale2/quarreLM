@@ -274,8 +274,6 @@ pub fn fit(
     const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
 
     const ingest_plan = regression.planIngest(solver_enum, p);
-    //TODO: stream mode does not have a consumer yet (solveFromStats)
-    // ingest_plan.mode = .materialize;
 
     var ing = try ingest(alloc, stream_ptr, y, p, ingest_plan);
 
@@ -290,7 +288,6 @@ pub fn fit(
             regopts = .{ .ols = .{
                 .method = opts.ols_method,
             } };
-            // _ = try regression.olsFit(alloc, table.columns, y, out.out_coeffs[0..p], ols_opts);
         },
         .enet => {
             const penalty_factors = try sliceOrFill(alloc, opts.penalty_factors, p, 1.0);
@@ -307,10 +304,6 @@ pub fn fit(
                 .max_iter = opts.max_iter,
                 .tol = opts.tol,
             } };
-
-            // const table = ing.table orelse return errors.QError.DimensionMismatch;
-            // n_iters = try regression.elasticNetFit(alloc, table.columns, y, out.out_coeffs[0..p], enet_opts);
-            // out.n_iter = n_iters;
         },
         .enet_path => return errors.QError.ParameterError,
     }
@@ -329,10 +322,6 @@ pub fn fit(
     return n_iter;
 }
 
-test {
-    _ = &fit;
-}
-
 pub fn fit_path(
     stream_ptr: *arrow.ArrowArrayStream,
     y_array_ptr: *arrow.ArrowArray,
@@ -342,8 +331,6 @@ pub fn fit_path(
     opts: FitOptions,
     out: *PathResult,
 ) !usize {
-    if (opts.lambda_min_ratio != null) std.debug.assert((opts.lambda_min_ratio.? > 0) and (opts.lambda_min_ratio.? < 1));
-
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -352,12 +339,15 @@ pub fn fit_path(
     // Extract y
     const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
 
-    var table = try importStream(alloc, stream_ptr, p);
-    defer table.deinit();
+    const ingest_plan = regression.planIngest(solver_enum, p);
 
-    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
+    var ing = try ingest(alloc, stream_ptr, y, p, ingest_plan);
+    defer ing.deinit();
 
-    var total_iters: usize = undefined;
+    if (ing.table != null) {
+        if (y.len != ing.table.?.n_rows) return errors.QError.StreamError;
+    }
+
     switch (solver_enum) {
         .ols => {
             return errors.QError.WrongAPICall;
@@ -369,8 +359,8 @@ pub fn fit_path(
             const penalty_factors = try sliceOrFill(alloc, opts.penalty_factors, p, 1.0);
             const lower_bounds = try sliceOrFill(alloc, opts.lower_bounds, p, -std.math.inf(f64));
             const upper_bounds = try sliceOrFill(alloc, opts.upper_bounds, p, std.math.inf(f64));
-            const lambda_min_ratio: f64 = opts.lambda_min_ratio orelse
-                if (table.n_rows >= p) 1e-4 else 1e-2;
+            // const lambda_min_ratio: f64 = opts.lambda_min_ratio orelse
+            //     if (table.n_rows >= p) 1e-4 else 1e-2;
 
             const n_lambda = opts.n_lambda orelse return errors.QError.ParameterError;
 
@@ -380,29 +370,26 @@ pub fn fit_path(
                 .lower_bounds = lower_bounds,
                 .upper_bounds = upper_bounds,
                 .n_lambda = n_lambda,
-                .lambda_min_ratio = lambda_min_ratio,
+                .lambda_min_ratio = opts.lambda_min_ratio,
                 .warm_start = if (opts.warm_start) |w| w[0..p] else null,
                 .max_iter = opts.max_iter,
                 .tol = opts.tol,
             };
 
-            total_iters = try regression.elasticNetPath(
+            const cols: ?[]const []const f64 = if (ing.table) |t| t.columns else null;
+
+            return try regression.solvePathFromStats(
                 alloc,
-                table.columns,
+                cols,
                 y,
                 out.out_coeffs_matrix[0 .. p * n_lambda],
                 out.lambda_paths[0..n_lambda],
                 out.n_iters[0..n_lambda],
                 path_opts,
+                ing.stats,
             );
         },
     }
-
-    return total_iters;
-}
-
-test {
-    _ = &fit_path;
 }
 
 test "bridge path: alpha actually reaches the solver (lambda_max scales as 1/alpha)" {

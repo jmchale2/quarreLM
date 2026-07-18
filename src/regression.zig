@@ -171,7 +171,6 @@ pub fn elasticNetPath(
     alloc: std.mem.Allocator,
     columns: []const []const f64,
     y: []const f64,
-    //outputs, px n_lamba
     out_coefs_matrix: []f64, // coef j, offset at lambda k = [j*n_lambda + k]
     out_lambdas: []f64,
     out_iters: []u64,
@@ -181,7 +180,17 @@ pub fn elasticNetPath(
     const n = y.len;
     const n_f: f64 = @floatFromInt(n);
 
+    const lambda_min_ratio: f64 = regopts.lambda_min_ratio orelse
+        if (n >= p) 1e-4 else 1e-2;
+
+    if (lambda_min_ratio <= 0 or lambda_min_ratio > 1) {
+        errors.setContext("elasticNetPath lambda_min_ratio must be between 0 and 1, {d}", .{lambda_min_ratio});
+        return errors.QError.ParameterError;
+    }
+
     var lambda_max: f64 = 0.0;
+
+    std.debug.assert(regopts.alpha >= 0 and regopts.alpha <= 1);
     const alpha_safe = @max(regopts.alpha, 1e-3);
 
     if (regopts.n_lambda < 2) {
@@ -198,11 +207,11 @@ pub fn elasticNetPath(
     if (lambda_max < 1e-10) return errors.QError.DegenerateData;
 
     const log_lambda_max = @log(lambda_max);
-    const log_lambda_min = @log(lambda_max * regopts.lambda_min_ratio);
+    const log_lambda_min = @log(lambda_max * lambda_min_ratio);
     for (0..regopts.n_lambda) |k| {
         const k_f: f64 = @floatFromInt(k);
-        const n_f2: f64 = @floatFromInt(regopts.n_lambda - 1);
-        out_lambdas[k] = @exp(log_lambda_max + k_f * (log_lambda_min - log_lambda_max) / n_f2);
+        const n_l2: f64 = @floatFromInt(regopts.n_lambda - 1);
+        out_lambdas[k] = @exp(log_lambda_max + k_f * (log_lambda_min - log_lambda_max) / n_l2);
     }
 
     const total_iters = try enet.path(alloc, columns, y, out_coefs_matrix, out_lambdas, out_iters, regopts);
@@ -336,29 +345,13 @@ pub fn planIngest(solver: Solver, p: usize) IngestPlan {
 pub fn solveFromStats(
     alloc: std.mem.Allocator,
     columns: ?[]const []const f64,
-    y: []const f64,
+    y: ?[]const f64,
     stats: SufficientStats,
     regopts: SolverOptions,
     out_coefs: []f64,
 ) !usize {
     if (out_coefs.len != stats.p) {
         errors.setContext("solveFromStats out_coef.len and stats.p disagree: {d}, {d}", .{ out_coefs.len, stats.p });
-        return errors.QError.DimensionMismatch;
-    }
-    if (columns) |cols| {
-        if (cols.len != stats.p) {
-            errors.setContext("solveFromStats columns.len and stats.p disagree: {d}, {d}", .{ cols.len, stats.p });
-            return errors.QError.DimensionMismatch;
-        }
-        for (cols) |col| {
-            if (col.len != y.len) {
-                errors.setContext("solveFromStats column length and y.len disagree: {d}, {d}", .{ col.len, y.len });
-                return errors.QError.DimensionMismatch;
-            }
-        }
-    }
-    if (y.len != stats.n) {
-        errors.setContext("solveFromStats y.len and stats.n disagree: {d}, {d}", .{ y.len, stats.n });
         return errors.QError.DimensionMismatch;
     }
     switch (regopts) {
@@ -368,12 +361,30 @@ pub fn solveFromStats(
                 stats,
                 out_coefs,
             );
-            return 0;
+            return 1;
         },
         .enet => |opts| {
             if (stats.gram == null) {
                 const cols = columns orelse return errors.QError.ParameterError;
-                return enet.fit(alloc, cols, y, out_coefs, opts);
+                const y_p = y orelse return errors.QError.ParameterError;
+
+                if (cols.len != stats.p) {
+                    errors.setContext("solveFromStats columns.len and stats.p disagree: {d}, {d}", .{ cols.len, stats.p });
+                    return errors.QError.DimensionMismatch;
+                }
+                for (cols) |col| {
+                    if (col.len != y_p.len) {
+                        errors.setContext("solveFromStats column length and y.len disagree: {d}, {d}", .{ col.len, y_p.len });
+                        return errors.QError.DimensionMismatch;
+                    }
+                }
+
+                if (y_p.len != stats.n) {
+                    errors.setContext("solveFromStats y.len and stats.n disagree: {d}, {d}", .{ y_p.len, stats.n });
+                    return errors.QError.DimensionMismatch;
+                }
+
+                return enet.fit(alloc, cols, y_p, out_coefs, opts);
             } else {
                 return enet.fitGram(alloc, out_coefs, opts, stats);
             }
@@ -381,6 +392,99 @@ pub fn solveFromStats(
     }
 }
 
+/// All allocations are workspace only, all results are written to the callers
+/// pre-allocated out_coefs that are passed in.
+pub fn solvePathFromStats(
+    alloc: std.mem.Allocator,
+    columns: ?[]const []const f64,
+    y: ?[]const f64,
+    out_coefs_matrix: []f64, // coef j, offset at lambda k = [j*n_lambda + k]
+    out_lambdas: []f64,
+    out_iters: []u64,
+    regopts: enet.PathOptions,
+    stats: SufficientStats,
+) !usize {
+    if (out_coefs_matrix.len != stats.p * regopts.n_lambda) {
+        errors.setContext("solvePathFromStats out_coef_matrix.len and stats.p disagree: {d}, {d}", .{ out_coefs_matrix.len, stats.p });
+        return errors.QError.DimensionMismatch;
+    }
+
+    const xty = stats.xty orelse {
+        errors.setContext("solvePathFromStats requires xty, got null.", .{});
+        return errors.QError.ParameterError;
+    };
+
+    const p = stats.p;
+    const n = stats.n;
+
+    const lambda_min_ratio: f64 = regopts.lambda_min_ratio orelse
+        if (n >= p) 1e-4 else 1e-2;
+
+    if (lambda_min_ratio <= 0 or lambda_min_ratio > 1) {
+        errors.setContext("elasticNetPath lambda_min_ratio must be between 0 and 1, {d}", .{lambda_min_ratio});
+        return errors.QError.ParameterError;
+    }
+
+    var lambda_max: f64 = 0.0;
+    std.debug.assert(regopts.alpha >= 0 and regopts.alpha <= 1);
+    const alpha_safe = @max(regopts.alpha, 1e-3);
+
+    if (regopts.n_lambda < 2) {
+        errors.setContext("solvePathFromStats requires n_lambda >= 2, received: {d}", .{regopts.n_lambda});
+        return errors.QError.ParameterError;
+    }
+
+    for (0..p) |j| {
+        if (regopts.penalty_factors[j] == 0.0) continue;
+
+        const lambda_j = @abs(xty[j]) / (alpha_safe * regopts.penalty_factors[j]);
+
+        if (lambda_j > lambda_max) lambda_max = lambda_j;
+    }
+    if (lambda_max < 1e-10) {
+        errors.setContext("solvePathFromStats lambda_max < 1e-10 : {d}. Check if all(pf == 0)?", .{lambda_max});
+        return errors.QError.DegenerateData;
+    }
+
+    const log_lambda_max = @log(lambda_max);
+    const log_lambda_min = @log(lambda_max * lambda_min_ratio);
+    for (0..regopts.n_lambda) |k| {
+        const k_f: f64 = @floatFromInt(k);
+        const n_f2: f64 = @floatFromInt(regopts.n_lambda - 1);
+        out_lambdas[k] = @exp(log_lambda_max + k_f * (log_lambda_min - log_lambda_max) / n_f2);
+    }
+
+    if (stats.gram == null) {
+        const cols = columns orelse {
+            errors.setContext("solvePathFromStats requires columns if stats.gram == null", .{});
+            return errors.QError.ParameterError;
+        };
+
+        if (cols.len != stats.p) {
+            errors.setContext("solvePathFromStats columns.len and stats.p disagree: {d}, {d}", .{ cols.len, stats.p });
+            return errors.QError.DimensionMismatch;
+        }
+        const y_p = y orelse {
+            errors.setContext("solvePathFromStats requires  y if stats.gram == null", .{});
+            return errors.QError.ParameterError;
+        };
+
+        if (y_p.len != stats.n) {
+            errors.setContext("solvePathFromStats y.len and stats.n disagree: {d}, {d}", .{ y_p.len, stats.n });
+            return errors.QError.DimensionMismatch;
+        }
+
+        for (cols) |col| {
+            if (col.len != y_p.len) {
+                errors.setContext("solvePathFromStats column length and y.len disagree: {d}, {d}", .{ col.len, y_p.len });
+                return errors.QError.DimensionMismatch;
+            }
+        }
+        return enet.path(alloc, cols, y_p, out_coefs_matrix, out_lambdas, out_iters, regopts);
+    } else {
+        return enet.pathGram(alloc, out_coefs_matrix, out_lambdas, out_iters, regopts, stats);
+    }
+}
 test {
     std.testing.refAllDecls(@This());
 }

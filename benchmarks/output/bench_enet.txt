@@ -1,0 +1,156 @@
+quarreLM elastic-net benchmark — 2026-07-18
+quarreLM build: v0.2.0-6-g5c4cc75-dirty:optim-ReleaseFast
+python 3.13.12  numpy 2.5.1  sklearn 1.9.0
+machine: x86_64
+
+==============================================================================
+  LASSO BENCHMARKS (alpha=1.0)
+==============================================================================
+
+==============================================================================
+  n=100  p=5  λ=0.05  lasso  (X: 0.0 MB)
+==============================================================================
+  True nonzero coefficients: 3/5
+
+  Correctness (vs sklearn):
+  quarreLM vs sklearn   max|diff| = 3.10e-09
+  sparsity: 3/5 nonzero (6 iters)
+
+  End-to-end (data in -> coefficients out):
+  sklearn Lasso (numpy)                 median=    0.127ms  best=    0.122ms  worst=    0.151ms
+  quarreLM enet (polars)                median=    0.182ms  best=    0.164ms  worst=    0.343ms
+
+  Speedups:
+    quarreLM vs sklearn:    0.70x
+
+==============================================================================
+  n=10,000  p=50  λ=0.05  lasso  (X: 4.0 MB)
+==============================================================================
+  True nonzero coefficients: 25/50
+
+  Correctness (vs sklearn):
+  quarreLM vs sklearn   max|diff| = 1.88e-08
+  sparsity: 25/50 nonzero (5 iters)
+
+  End-to-end (data in -> coefficients out):
+  sklearn Lasso (numpy)                 median=    1.480ms  best=    1.461ms  worst=    1.728ms
+  quarreLM enet (polars)                median=    1.159ms  best=    1.147ms  worst=    1.239ms
+
+  Speedups:
+    quarreLM vs sklearn:    1.28x
+
+==============================================================================
+  n=100,000  p=100  λ=0.05  lasso  (X: 80.0 MB)
+==============================================================================
+  True nonzero coefficients: 50/100
+
+  Correctness (vs sklearn):
+  quarreLM vs sklearn   max|diff| = 5.90e-08
+  sparsity: 49/100 nonzero (4 iters)
+
+  End-to-end (data in -> coefficients out):
+  sklearn Lasso (numpy)                 median=   21.187ms  best=   20.926ms  worst=   22.864ms
+  quarreLM enet (polars)                median=   16.877ms  best=   16.718ms  worst=   17.595ms
+
+  Speedups:
+    quarreLM vs sklearn:    1.26x
+
+==============================================================================
+  n=1,000  p=500  λ=0.1  lasso  (X: 4.0 MB)
+==============================================================================
+  True nonzero coefficients: 250/500
+
+  Correctness (vs sklearn):
+  quarreLM vs sklearn   max|diff| = 5.92e-06
+  sparsity: 236/500 nonzero (42 iters)
+
+  End-to-end (data in -> coefficients out):
+  sklearn Lasso (numpy)                 median=    1.957ms  best=    1.945ms  worst=    2.067ms
+  quarreLM enet (polars)                median=    8.563ms  best=    7.827ms  worst=   13.611ms
+
+  Speedups:
+    quarreLM vs sklearn:    0.23x
+
+==============================================================================
+  ELASTIC NET BENCHMARKS (alpha=0.5)
+==============================================================================
+
+==============================================================================
+  n=100  p=5  λ=0.05  enet(α=0.5)  (X: 0.0 MB)
+==============================================================================
+  True nonzero coefficients: 3/5
+
+  Correctness (vs sklearn):
+  quarreLM vs sklearn   max|diff| = 2.76e-09
+  sparsity: 3/5 nonzero (6 iters)
+
+  End-to-end (data in -> coefficients out):
+  sklearn ElasticNet (numpy)            median=    0.135ms  best=    0.128ms  worst=    0.227ms
+  quarreLM enet (polars)                median=    0.171ms  best=    0.163ms  worst=    0.254ms
+
+  Speedups:
+    quarreLM vs sklearn:    0.79x
+
+==============================================================================
+  n=10,000  p=50  λ=0.05  enet(α=0.5)  (X: 4.0 MB)
+==============================================================================
+  True nonzero coefficients: 25/50
+
+  Correctness (vs sklearn):
+  quarreLM vs sklearn   max|diff| = 1.49e-08
+  sparsity: 25/50 nonzero (5 iters)
+
+  End-to-end (data in -> coefficients out):
+  sklearn ElasticNet (numpy)            median=    1.115ms  best=    1.061ms  worst=    1.437ms
+  quarreLM enet (polars)                median=    1.155ms  best=    1.144ms  worst=    1.170ms
+
+  Speedups:
+    quarreLM vs sklearn:    0.97x
+
+==============================================================================
+  n=100,000  p=100  λ=0.05  enet(α=0.5)  (X: 80.0 MB)
+==============================================================================
+  True nonzero coefficients: 50/100
+
+  Correctness (vs sklearn):
+  quarreLM vs sklearn   max|diff| = 6.03e-08
+  sparsity: 50/100 nonzero (4 iters)
+
+  End-to-end (data in -> coefficients out):
+  sklearn ElasticNet (numpy)            median=   22.043ms  best=   21.074ms  worst=   26.768ms
+  quarreLM enet (polars)                median=   17.325ms  best=   17.055ms  worst=   17.720ms
+
+  Speedups:
+    quarreLM vs sklearn:    1.27x
+
+==============================================================================
+  n=100,000  p=500  λ=0.05  enet(α=0.5)  (X: 400.0 MB)
+==============================================================================
+  True nonzero coefficients: 250/500
+
+  Correctness (vs sklearn):
+  quarreLM vs sklearn   max|diff| = 2.17e-08
+  sparsity: 245/500 nonzero (8 iters)
+
+  End-to-end (data in -> coefficients out):
+  sklearn ElasticNet (numpy)            median=  159.882ms  best=  152.831ms  worst=  167.630ms
+  quarreLM enet (polars)                median=   97.129ms  best=   84.950ms  worst=  113.836ms
+
+  Speedups:
+    quarreLM vs sklearn:    1.65x
+
+==============================================================================
+  n=1,000  p=500  λ=0.1  enet(α=0.5)  (X: 4.0 MB)
+==============================================================================
+  True nonzero coefficients: 250/500
+
+  Correctness (vs sklearn):
+  quarreLM vs sklearn   max|diff| = 1.03e-05
+  sparsity: 321/500 nonzero (46 iters)
+
+  End-to-end (data in -> coefficients out):
+  sklearn ElasticNet (numpy)            median=    2.512ms  best=    2.470ms  worst=    2.956ms
+  quarreLM enet (polars)                median=    8.406ms  best=    8.148ms  worst=   19.582ms
+
+  Speedups:
+    quarreLM vs sklearn:    0.30x
