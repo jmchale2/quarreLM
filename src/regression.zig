@@ -14,6 +14,16 @@ const dotProduct = @import("solvers/common.zig").dotProduct;
 
 const axpy = @import("solvers/common.zig").axpy;
 
+const StatsSpec = @import("solvers/common.zig").StatsSpec;
+const SufficientStats = @import("solvers/common.zig").SufficientStats;
+const GRAM_P_THRESHOLD = @import("solvers/enet.zig").GRAM_P_THRESHOLD;
+
+pub const Solver = enum(c_int) {
+    ols = 0,
+    enet = 1,
+    enet_path = 2,
+};
+
 pub fn olsFit(
     alloc: std.mem.Allocator,
     columns: []const []const f64,
@@ -297,4 +307,80 @@ test "elasticNetPath warm starts reduce total iterations" {
         const at_min = @abs(out_coef_matrix[j * n_lambda + n_lambda - 1]);
         try std.testing.expect(at_min >= at_max);
     }
+}
+
+pub const IngestMode = enum { stream, materialize };
+
+pub const IngestPlan = struct {
+    mode: IngestMode,
+    spec: StatsSpec,
+};
+pub const SolverOptions = union(enum) {
+    ols: ols.Options,
+    enet: enet.Options,
+};
+
+pub fn planIngest(solver: Solver, p: usize) IngestPlan {
+    return switch (solver) {
+        .ols => .{ .mode = .stream, .spec = .{ .gram = true, .xty = true } },
+        .enet, .enet_path => if (p <= GRAM_P_THRESHOLD)
+            .{ .mode = .stream, .spec = .{ .gram = true, .xty = true } }
+        else
+            .{ .mode = .materialize, .spec = .{ .gram = false, .xty = true } },
+    };
+}
+
+/// Calls a solver based on the SolverOptions
+/// All allocations are workspace only, all results are written to the callers
+/// pre-allocated out_coefs that are passed in.
+pub fn solveFromStats(
+    alloc: std.mem.Allocator,
+    columns: ?[]const []const f64,
+    y: []const f64,
+    stats: SufficientStats,
+    regopts: SolverOptions,
+    out_coefs: []f64,
+) !usize {
+    if (out_coefs.len != stats.p) {
+        errors.setContext("solveFromStats out_coef.len and stats.p disagree: {d}, {d}", .{ out_coefs.len, stats.p });
+        return errors.QError.DimensionMismatch;
+    }
+    if (columns) |cols| {
+        if (cols.len != stats.p) {
+            errors.setContext("solveFromStats columns.len and stats.p disagree: {d}, {d}", .{ cols.len, stats.p });
+            return errors.QError.DimensionMismatch;
+        }
+        for (cols) |col| {
+            if (col.len != y.len) {
+                errors.setContext("solveFromStats column length and y.len disagree: {d}, {d}", .{ col.len, y.len });
+                return errors.QError.DimensionMismatch;
+            }
+        }
+    }
+    if (y.len != stats.n) {
+        errors.setContext("solveFromStats y.len and stats.n disagree: {d}, {d}", .{ y.len, stats.n });
+        return errors.QError.DimensionMismatch;
+    }
+    switch (regopts) {
+        .ols => {
+            try ols.choleskyDecompGram(
+                alloc,
+                stats,
+                out_coefs,
+            );
+            return 0;
+        },
+        .enet => |opts| {
+            if (stats.gram == null) {
+                const cols = columns orelse return errors.QError.ParameterError;
+                return enet.fit(alloc, cols, y, out_coefs, opts);
+            } else {
+                return enet.fitGram(alloc, out_coefs, opts, stats);
+            }
+        },
+    }
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

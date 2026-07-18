@@ -99,24 +99,29 @@ test "axpy single element" {
 }
 
 pub fn sumV(a: []const f64) f64 {
-    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4; // per-target lane count; fallback 4 (AVX2-ish)
+    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4;
+    const V = @Vector(vec_len, f64);
     const n = a.len;
+    const stride = vec_len * 4;
 
-    var acc: @Vector(vec_len, f64) = @splat(0.0);
+    var acc0: V = @splat(0.0);
+    var acc1: V = @splat(0.0);
+    var acc2: V = @splat(0.0);
+    var acc3: V = @splat(0.0);
 
     var i: usize = 0;
+    while (i + stride <= n) : (i += stride) {
+        acc0 += a[i..][0..vec_len].*;
+        acc1 += a[i + vec_len ..][0..vec_len].*;
+        acc2 += a[i + vec_len * 2 ..][0..vec_len].*;
+        acc3 += a[i + vec_len * 3 ..][0..vec_len].*;
+    }
     while (i + vec_len <= n) : (i += vec_len) {
-        const va: @Vector(vec_len, f64) = a[i..][0..vec_len].*;
-        acc += va;
+        acc0 += @as(V, a[i..][0..vec_len].*);
     }
 
-    var sum: f64 = @reduce(.Add, acc);
-
-    // Scalar remainder
-    while (i < n) : (i += 1) {
-        sum += a[i];
-    }
-
+    var sum: f64 = @reduce(.Add, (acc0 + acc1) + (acc2 + acc3));
+    while (i < n) : (i += 1) sum += a[i];
     return sum;
 }
 
@@ -129,26 +134,35 @@ test "sumV sums correctly" {
 
 pub fn dotProduct(a: []const f64, b: []const f64) f64 {
     std.debug.assert(a.len == b.len);
-    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4; // per-target lane count; fallback 4 (AVX2-ish)
+    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4;
+    const V = @Vector(vec_len, f64);
     const n = a.len;
+    const stride = vec_len * 4;
 
-    // SIMD accumulator
-    var acc: @Vector(vec_len, f64) = @splat(0.0);
+    var acc0: V = @splat(0.0);
+    var acc1: V = @splat(0.0);
+    var acc2: V = @splat(0.0);
+    var acc3: V = @splat(0.0);
 
     var i: usize = 0;
+    while (i + stride <= n) : (i += stride) {
+        acc0 = @mulAdd(V, a[i..][0..vec_len].*, b[i..][0..vec_len].*, acc0);
+        acc1 = @mulAdd(V, a[i + vec_len ..][0..vec_len].*, b[i + vec_len ..][0..vec_len].*, acc1);
+        acc2 = @mulAdd(V, a[i + vec_len * 2 ..][0..vec_len].*, b[i + vec_len * 2 ..][0..vec_len].*, acc2);
+        acc3 = @mulAdd(V, a[i + vec_len * 3 ..][0..vec_len].*, b[i + vec_len * 3 ..][0..vec_len].*, acc3);
+    }
+
+    // vector cleanup: single chain, at most 3 iterations
     while (i + vec_len <= n) : (i += vec_len) {
-        const va: @Vector(vec_len, f64) = a[i..][0..vec_len].*;
-        const vb: @Vector(vec_len, f64) = b[i..][0..vec_len].*;
-        acc += va * vb;
+        acc0 = @mulAdd(V, a[i..][0..vec_len].*, b[i..][0..vec_len].*, acc0);
     }
 
-    var sum: f64 = @reduce(.Add, acc);
+    var sum: f64 = @reduce(.Add, (acc0 + acc1) + (acc2 + acc3));
 
-    // Scalar remainder
+    // scalar remainder: < vec_len iterations
     while (i < n) : (i += 1) {
-        sum += a[i] * b[i];
+        sum = @mulAdd(f64, a[i], b[i], sum);
     }
-
     return sum;
 }
 
@@ -203,6 +217,112 @@ test "dotProduct negative values" {
     const b = [_]f64{ 5, -4, 3, -2, 1 };
     // -5 + -8 + -9 + -8 + -5 = -35
     try std.testing.expectApproxEqAbs(@as(f64, -35.0), dotProduct(&a, &b), 1e-10);
+}
+
+pub const Moments1 = struct { sum: f64, sum_sq: f64 };
+
+pub fn sumAndSumSq(a: []const f64) Moments1 {
+    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4;
+    const V = @Vector(vec_len, f64);
+    const n = a.len;
+    const stride = vec_len * 4;
+
+    var s0: V = @splat(0.0);
+    var s1: V = @splat(0.0);
+    var s2: V = @splat(0.0);
+    var s3: V = @splat(0.0);
+    var q0: V = @splat(0.0);
+    var q1: V = @splat(0.0);
+    var q2: V = @splat(0.0);
+    var q3: V = @splat(0.0);
+
+    var i: usize = 0;
+    while (i + stride <= n) : (i += stride) {
+        const v0: V = a[i..][0..vec_len].*;
+        const v1: V = a[i + vec_len ..][0..vec_len].*;
+        const v2: V = a[i + vec_len * 2 ..][0..vec_len].*;
+        const v3: V = a[i + vec_len * 3 ..][0..vec_len].*;
+        s0 += v0;
+        s1 += v1;
+        s2 += v2;
+        s3 += v3;
+        q0 = @mulAdd(V, v0, v0, q0);
+        q1 = @mulAdd(V, v1, v1, q1);
+        q2 = @mulAdd(V, v2, v2, q2);
+        q3 = @mulAdd(V, v3, v3, q3);
+    }
+    while (i + vec_len <= n) : (i += vec_len) {
+        const v: V = a[i..][0..vec_len].*;
+        s0 += v;
+        q0 = @mulAdd(V, v, v, q0);
+    }
+
+    var sum: f64 = @reduce(.Add, (s0 + s1) + (s2 + s3));
+    var sum_sq: f64 = @reduce(.Add, (q0 + q1) + (q2 + q3));
+    while (i < n) : (i += 1) {
+        sum += a[i];
+        sum_sq = @mulAdd(f64, a[i], a[i], sum_sq);
+    }
+    return .{ .sum = sum, .sum_sq = sum_sq };
+}
+
+test "sumAndSumSq empty slice" {
+    const a = [_]f64{};
+    const m = sumAndSumSq(&a);
+    try std.testing.expectEqual(@as(f64, 0.0), m.sum);
+    try std.testing.expectEqual(@as(f64, 0.0), m.sum_sq);
+}
+
+test "sumAndSumSq single element" {
+    const a = [_]f64{-3.0};
+    const m = sumAndSumSq(&a);
+    try std.testing.expectApproxEqAbs(@as(f64, -3.0), m.sum, 1e-15);
+    try std.testing.expectApproxEqAbs(@as(f64, 9.0), m.sum_sq, 1e-15);
+}
+
+test "sumAndSumSq known exact values" {
+    // Small integers: every intermediate is exact in f64 regardless of
+    // summation order, so equality here is exact, not approximate.
+    // sum = 1+2+3+4+5 = 15; sum_sq = 1+4+9+16+25 = 55
+    const a = [_]f64{ 1.0, 2.0, 3.0, 4.0, 5.0 };
+    const m = sumAndSumSq(&a);
+    try std.testing.expectEqual(@as(f64, 15.0), m.sum);
+    try std.testing.expectEqual(@as(f64, 55.0), m.sum_sq);
+}
+
+test "sumAndSumSq mixed signs: sum cancels, sum_sq does not" {
+    // Distinguishes the two outputs — a copy-paste bug wiring sum_sq to the
+    // sum accumulators (or vice versa) fails here and nowhere obvious else.
+    const a = [_]f64{ 2.0, -2.0, 1.0, -1.0, 3.0, -3.0 };
+    const m = sumAndSumSq(&a);
+    try std.testing.expectEqual(@as(f64, 0.0), m.sum);
+    try std.testing.expectEqual(@as(f64, 28.0), m.sum_sq);
+}
+
+test "sumAndSumSq length spanning all three loop regimes exactly" {
+    // n = 4*vec_len + vec_len + 1: one full stride iteration, one vector
+    // cleanup iteration, one scalar-tail element — all three loops execute.
+    // Constant 1.0 makes the expected values exact: sum = n, sum_sq = n.
+    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4;
+    const n = vec_len * 4 + vec_len + 1;
+
+    var buf: [128]f64 = undefined;
+    for (0..n) |i| buf[i] = 1.0;
+
+    const m = sumAndSumSq(buf[0..n]);
+    const n_f: f64 = @floatFromInt(n);
+    try std.testing.expectEqual(n_f, m.sum);
+    try std.testing.expectEqual(n_f, m.sum_sq);
+}
+
+test "sumAndSumSq large-magnitude values stay finite and scale correctly" {
+    // sum_sq squares the inputs — guard against a kernel change that
+    // introduces premature overflow (e.g. squaring a partial reduction).
+    const a = [_]f64{ 1e150, 1e150, -1e150 };
+    const m = sumAndSumSq(&a);
+    try std.testing.expectApproxEqRel(@as(f64, 1e150), m.sum, 1e-12);
+    try std.testing.expectApproxEqRel(@as(f64, 3e300), m.sum_sq, 1e-12);
+    try std.testing.expect(std.math.isFinite(m.sum_sq));
 }
 
 /// Compute Gram matrix: result = (1/n) * X'X
@@ -596,6 +716,7 @@ pub const SufficientStats = struct {
     n: usize,
     p: usize,
     sum_x: []f64,
+    sum_xx: []f64,
     sum_y: f64,
     yty: f64,
     xty: ?[]f64,
@@ -605,7 +726,6 @@ pub const SufficientStats = struct {
 pub const StatsSpec = struct {
     gram: bool,
     xty: bool,
-    moments: bool,
 };
 
 fn allocZeroed(alloc: std.mem.Allocator, n: usize) ![]f64 {
@@ -636,6 +756,7 @@ pub const StatsAccumulator = struct {
     n_seen: usize = 0,
 
     sum_x: []f64,
+    sum_xx: []f64,
     sum_y: f64 = 0,
     yty: f64 = 0,
     xty: ?[]f64,
@@ -646,6 +767,7 @@ pub const StatsAccumulator = struct {
         const tile_rows = @max(64, (256 * 1024 / @sizeOf(f64)) / p);
 
         const sum_x: []f64 = try allocZeroed(alloc, p);
+        const sum_xx: []f64 = try allocZeroed(alloc, p);
         const xty_: ?[]f64 = if (spec.xty) try allocZeroed(alloc, p) else null;
         const gram: ?[]f64 = if (spec.gram) try allocZeroed(alloc, p * p) else null;
         const pack: ?[]f64 = if (spec.gram) try allocZeroed(alloc, p * tile_rows) else null;
@@ -655,6 +777,7 @@ pub const StatsAccumulator = struct {
             .p = p,
             .tile_rows = tile_rows,
             .sum_x = sum_x,
+            .sum_xx = sum_xx,
             .gram = gram,
             .xty = xty_,
             .pack = pack,
@@ -667,15 +790,17 @@ pub const StatsAccumulator = struct {
         // per-column stats
         for (columns, 0..) |col, j| {
             std.debug.assert(col.len == rows);
-            if (self.spec.moments) self.sum_x[j] += sumV(col);
+            const m = sumAndSumSq(col);
+            self.sum_x[j] += m.sum;
+            self.sum_xx[j] += m.sum_sq;
+
             if (self.xty) |xt| xt[j] += dotProduct(col, y);
         }
 
         // per-chunk stats
-        if (self.spec.moments) {
-            self.sum_y += sumV(y);
-            self.yty += dotProduct(y, y);
-        }
+        self.sum_y += sumV(y);
+        self.yty += dotProduct(y, y);
+
         if (self.gram) |g| {
             var start: usize = 0;
             while (start < rows) : (start += self.tile_rows) {
@@ -708,6 +833,7 @@ pub const StatsAccumulator = struct {
             .n = self.n_seen,
             .p = self.p,
             .sum_x = self.sum_x,
+            .sum_xx = self.sum_xx,
             .sum_y = self.sum_y,
             .yty = self.yty,
             .xty = self.xty,
@@ -749,7 +875,6 @@ test "StatsAccumulator: two uneven chunks match one-shot computation" {
     var acc = try StatsAccumulator.init(alloc, p, .{
         .gram = true,
         .xty = true,
-        .moments = true,
     });
     acc.tile_rows = 7; // force runt (37 = 5*7+2) and exact (63 = 9*7) tile paths
 
@@ -803,10 +928,14 @@ test "StatsAccumulator: two even chunks match one-shot computation" {
     xty(&X, &data.y, n, p, &xty_ref); // X'y / n
 
     var sum_x_ref: [p]f64 = .{ 0, 0, 0 };
+    var sum_xx_ref: [p]f64 = .{ 0, 0, 0 };
     var sum_y_ref: f64 = 0;
     var yty_ref: f64 = 0;
     for (0..n) |i| {
-        for (0..p) |j| sum_x_ref[j] += cols[j][i];
+        for (0..p) |j| {
+            sum_x_ref[j] += cols[j][i];
+            sum_xx_ref[j] += cols[j][i] * cols[j][i];
+        }
         sum_y_ref += data.y[i];
         yty_ref += data.y[i] * data.y[i];
     }
@@ -815,7 +944,6 @@ test "StatsAccumulator: two even chunks match one-shot computation" {
     var acc = try StatsAccumulator.init(alloc, p, .{
         .gram = true,
         .xty = true,
-        .moments = true,
     });
     acc.tile_rows = 10;
 
@@ -842,7 +970,8 @@ test "StatsAccumulator: two even chunks match one-shot computation" {
 
     // moments: RAW by convention (consumers divide)
     for (0..p) |j| {
-        try std.testing.expectApproxEqAbs(sum_x_ref[j], stats.sum_x[j], 1e-9);
+        try expectRelClose(sum_x_ref[j], stats.sum_x[j], 1e-12);
+        try expectRelClose(sum_xx_ref[j], stats.sum_xx[j], 1e-12);
     }
     try std.testing.expectApproxEqAbs(sum_y_ref, stats.sum_y, 1e-9);
     try std.testing.expectApproxEqAbs(yty_ref, stats.yty, 1e-9);
@@ -859,7 +988,6 @@ test "StatsAccumulator: spec flags off mean null, not garbage" {
     var acc = try StatsAccumulator.init(alloc, 3, .{
         .gram = false,
         .xty = true,
-        .moments = false,
     });
     acc.update(&cols, &data.y);
     const stats = acc.finalize();
@@ -867,6 +995,157 @@ test "StatsAccumulator: spec flags off mean null, not garbage" {
     try std.testing.expectEqual(@as(?[]f64, null), stats.gram);
     try std.testing.expect(stats.xty != null);
     try std.testing.expectEqual(@as(usize, 20), stats.n);
+}
+
+fn refSum(a: []const f64) f64 {
+    var s: f64 = 0.0;
+    for (a) |x| s += x;
+    return s;
+}
+
+fn refDot(a: []const f64, b: []const f64) f64 {
+    var s: f64 = 0.0;
+    for (a, b) |x, y| s += x * y;
+    return s;
+}
+
+fn refSumSq(a: []const f64) f64 {
+    var s: f64 = 0.0;
+    for (a) |x| s += x * x;
+    return s;
+}
+
+fn expectRelClose(expected: f64, actual: f64, rel_tol: f64) !void {
+    // Relative comparison with an absolute floor: reassociation + FMA mean
+    // the kernels won't match a scalar reference bitwise, and near-zero
+    // sums make pure relative comparison meaningless.
+    const scale = @max(@abs(expected), 1.0);
+    try std.testing.expect(@abs(expected - actual) <= rel_tol * scale);
+}
+
+test "kernel property sweep: sumV/dotProduct/sumAndSumSq vs scalar reference across all remainder classes" {
+    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4;
+    const stride = vec_len * 4;
+    // Two full stride periods + tail guarantees: 0 and ≥1 stride iterations
+    // × {0,1,2,3} vector-cleanup iterations × every scalar-tail length.
+    const max_n = stride * 2 + vec_len;
+
+    var buf_a: [512]f64 = undefined;
+    var buf_b: [512]f64 = undefined;
+    std.debug.assert(max_n <= buf_a.len);
+
+    var prng = std.Random.DefaultPrng.init(0xdead_beef);
+    const rand = prng.random();
+
+    var n: usize = 0;
+    while (n <= max_n) : (n += 1) {
+        for (0..n) |i| {
+            // Mixed-sign, mixed-magnitude, no pathological cancellation.
+            buf_a[i] = (rand.float(f64) - 0.5) * 4.0;
+            buf_b[i] = (rand.float(f64) - 0.5) * 4.0;
+        }
+        const a = buf_a[0..n];
+        const b = buf_b[0..n];
+
+        try expectRelClose(refSum(a), sumV(a), 1e-12);
+        try expectRelClose(refDot(a, b), dotProduct(a, b), 1e-12);
+
+        const m = sumAndSumSq(a);
+        try expectRelClose(refSum(a), m.sum, 1e-12);
+        try expectRelClose(refSumSq(a), m.sum_sq, 1e-12);
+    }
+}
+
+test "kernel property: sumAndSumSq agrees with sumV and dotProduct(a,a) at every remainder class" {
+    // Ties the fused kernel to the two it replaces — this is the invariant
+    // the accumulator's moments block actually depends on.
+    const vec_len: u32 = std.simd.suggestVectorLength(f64) orelse 4;
+    const max_n = vec_len * 4 * 2 + vec_len;
+
+    var buf: [512]f64 = undefined;
+    var prng = std.Random.DefaultPrng.init(0x5eed);
+    const rand = prng.random();
+
+    var n: usize = 0;
+    while (n <= max_n) : (n += 1) {
+        for (0..n) |i| buf[i] = (rand.float(f64) - 0.5) * 10.0;
+        const a = buf[0..n];
+
+        const m = sumAndSumSq(a);
+        try expectRelClose(sumV(a), m.sum, 1e-12);
+        try expectRelClose(dotProduct(a, a), m.sum_sq, 1e-12);
+    }
+}
+
+test "sum_xx/n agrees with gram diagonal when both are computed" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const n = 100;
+    const p = 3;
+    const data = fixtures.sinCos(n).init();
+
+    var acc = try StatsAccumulator.init(alloc, p, .{
+        .gram = true,
+        .xty = true,
+    });
+    acc.tile_rows = 10;
+
+    const split = 50;
+    const cols_a = [_][]const f64{ data.x1[0..split], data.x2[0..split], data.x3[0..split] };
+    const cols_b = [_][]const f64{ data.x1[split..], data.x2[split..], data.x3[split..] };
+
+    acc.update(&cols_a, data.y[0..split]);
+    acc.update(&cols_b, data.y[split..]);
+    const stats = acc.finalize();
+
+    const n_f: f64 = @floatFromInt(stats.n);
+    for (0..p) |j| {
+        // gram is /n, sum_xx is raw — this test also pins the convention.
+        try expectRelClose(stats.sum_xx[j] / n_f, stats.gram.?[j * p + j], 1e-12);
+    }
+}
+test "gram-less spec still produces full moments including sum_xx" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const n = 100;
+    const p = 3;
+    const data = fixtures.sinCos(n).init();
+
+    const cols = [_][]const f64{ &data.x1, &data.x2, &data.x3 };
+
+    var X: [n * p]f64 = undefined;
+    packX(&cols, &X, n);
+
+    var sum_x_ref: [p]f64 = .{ 0, 0, 0 };
+    var sum_xx_ref: [p]f64 = .{ 0, 0, 0 };
+    for (0..n) |i| {
+        for (0..p) |j| {
+            sum_x_ref[j] += cols[j][i];
+            sum_xx_ref[j] += cols[j][i] * cols[j][i];
+        }
+    }
+    var acc = try StatsAccumulator.init(alloc, p, .{
+        .gram = false,
+        .xty = true,
+    });
+    acc.tile_rows = 10;
+
+    const split = 50;
+    const cols_a = [_][]const f64{ data.x1[0..split], data.x2[0..split], data.x3[0..split] };
+    const cols_b = [_][]const f64{ data.x1[split..], data.x2[split..], data.x3[split..] };
+
+    acc.update(&cols_a, data.y[0..split]);
+    acc.update(&cols_b, data.y[split..]);
+    const stats = acc.finalize();
+    try std.testing.expect(stats.gram == null);
+    try std.testing.expect(stats.xty != null);
+    for (0..p) |j| {
+        try expectRelClose(sum_xx_ref[j], stats.sum_xx[j], 1e-12);
+    }
 }
 
 test {

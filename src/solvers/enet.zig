@@ -9,6 +9,11 @@ const axpy = @import("common.zig").axpy;
 const inf = std.math.inf(f64);
 const clamp = std.math.clamp;
 
+const SufficientStats = @import("common.zig").SufficientStats;
+const StatsSpec = @import("common.zig").StatsSpec;
+
+pub const GRAM_P_THRESHOLD: usize = 500;
+
 pub const Options = struct {
     lambda: f64,
     alpha: f64,
@@ -54,19 +59,26 @@ test "softThreshold within dead zone" {
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), softThreshold(0.0, 2.0), 1e-10);
 }
 
+const CdInputs = union(enum) {
+    naive: struct {
+        columns: []const []const f64,
+        r: []f64,
+    },
+    gram: struct {
+        gram: []const f64,
+        xty: []const f64,
+    },
+    //  cov: struct { cache: *CovCache, g: []f64 } — lazy covariance
+};
+
 fn fitInner(
-    columns: []const []const f64,
-    r: []f64, // residual — PERSISTENT, not re-created
-    coefs: []f64, // warm-started coefficients
-    col_norms_squared: []const f64, // precomputed
-    active: []bool, // pre-allocated
-    gram: ?[]const f64,
-    xty: ?[]const f64,
+    inputs: CdInputs,
+    coefs: []f64,
+    col_norms_squared: []const f64,
+    active: []bool,
     regopts: Options,
 ) usize {
-    const p = columns.len;
-    const n = r.len;
-    const n_f: f64 = @floatFromInt(n);
+    const p = coefs.len;
 
     // Just the coordinate descent loops
 
@@ -84,16 +96,16 @@ fn fitInner(
 
                 const beta_old = coefs[j];
 
-                const rho_j = blk: {
-                    if (gram) |g| {
-                        var xjr: f64 = xty.?[j];
-                        for (0..p) |k| {
-                            xjr -= g[j * p + k] * coefs[k];
-                        }
+                const rho_j = switch (inputs) {
+                    .gram => |g| blk: {
+                        var xjr: f64 = g.xty[j];
+                        for (0..p) |k| xjr -= g.gram[j * p + k] * coefs[k];
                         break :blk xjr + col_norms_squared[j] * coefs[j];
-                    } else {
-                        break :blk dotProduct(columns[j], r) / n_f + col_norms_squared[j] * coefs[j];
-                    }
+                    },
+                    .naive => |nv| blk: {
+                        const n_f: f64 = @floatFromInt(nv.r.len);
+                        break :blk dotProduct(nv.columns[j], nv.r) / n_f + col_norms_squared[j] * coefs[j];
+                    },
                 };
 
                 const beta_new = softThreshold(rho_j, regopts.lambda * regopts.alpha * regopts.penalty_factors[j]) /
@@ -104,8 +116,9 @@ fn fitInner(
 
                 const delta = beta_clamped - beta_old;
                 if (delta != 0.0) {
-                    if (gram == null) {
-                        axpy(-delta, columns[j], r);
+                    switch (inputs) {
+                        .naive => |nv| axpy(-delta, nv.columns[j], nv.r),
+                        .gram => {},
                     }
                     const change = col_norms_squared[j] * delta * delta;
                     if (change > max_change) max_change = change;
@@ -119,16 +132,16 @@ fn fitInner(
         max_change = 0.0;
         for (0..p) |j| {
             if (active[j]) continue;
-            const rho_j = blk: {
-                if (gram) |g| {
-                    var xjr: f64 = xty.?[j];
-                    for (0..p) |k| {
-                        xjr -= g[j * p + k] * coefs[k];
-                    }
+            const rho_j = switch (inputs) {
+                .gram => |g| blk: {
+                    var xjr: f64 = g.xty[j];
+                    for (0..p) |k| xjr -= g.gram[j * p + k] * coefs[k];
                     break :blk xjr + col_norms_squared[j] * coefs[j];
-                } else {
-                    break :blk dotProduct(columns[j], r) / n_f + col_norms_squared[j] * coefs[j];
-                }
+                },
+                .naive => |nv| blk: {
+                    const n_f: f64 = @floatFromInt(nv.r.len);
+                    break :blk dotProduct(nv.columns[j], nv.r) / n_f + col_norms_squared[j] * coefs[j];
+                },
             };
             const beta_new = softThreshold(rho_j, regopts.lambda * regopts.alpha * regopts.penalty_factors[j]) /
                 (col_norms_squared[j] + regopts.lambda * (1.0 - regopts.alpha) * regopts.penalty_factors[j]);
@@ -139,8 +152,9 @@ fn fitInner(
                 any_new = true;
                 coefs[j] = beta_clamped;
                 const delta = beta_clamped;
-                if (gram == null) {
-                    axpy(-delta, columns[j], r);
+                switch (inputs) {
+                    .naive => |nv| axpy(-delta, nv.columns[j], nv.r),
+                    .gram => {},
                 }
                 const change = col_norms_squared[j] * delta * delta;
                 if (change > max_change) max_change = change;
@@ -191,12 +205,37 @@ pub fn fit(
         active[j] = out_coefs[j] != 0.0;
     }
 
-    const gram: ?[]f64 = null;
-    const xty: ?[]f64 = null;
+    const inputs: CdInputs = .{ .naive = .{ .columns = columns, .r = r } };
 
-    const total_passes = fitInner(columns, r, out_coefs, col_norms_squared, active, gram, xty, regopts);
+    return fitInner(inputs, out_coefs, col_norms_squared, active, regopts);
+}
 
-    return total_passes;
+pub fn fitGram(
+    alloc: std.mem.Allocator,
+    out_coefs: []f64,
+    regopts: Options,
+    stats: SufficientStats,
+) !usize {
+    const p = stats.p;
+    const gram = stats.gram orelse return errors.QError.ParameterError; // plan/solver contract
+    const xty = stats.xty orelse return errors.QError.ParameterError;
+
+    if (regopts.warm_start) |w| {
+        if (w.len != p) return errors.QError.DimensionMismatch;
+        if (w.ptr != out_coefs.ptr) @memcpy(out_coefs, w);
+    } else {
+        @memset(out_coefs, 0);
+    }
+
+    const col_norms_squared = try alloc.alloc(f64, p);
+    for (0..p) |j| col_norms_squared[j] = gram[j * p + j];
+
+    const active = try alloc.alloc(bool, p);
+    for (0..p) |j| active[j] = out_coefs[j] != 0.0;
+
+    const inputs: CdInputs = .{ .gram = .{ .gram = gram, .xty = xty } };
+
+    return fitInner(inputs, out_coefs, col_norms_squared, active, regopts);
 }
 
 pub fn path(
@@ -230,7 +269,7 @@ pub fn path(
     }
 
     //tunable p breakpoint
-    const p_breakpoint: usize = 300;
+    const p_breakpoint: usize = GRAM_P_THRESHOLD;
     const n_breakpoint: usize = p;
     const use_gram = n > n_breakpoint and p < p_breakpoint;
     var gram: ?[]f64 = null;
@@ -272,7 +311,14 @@ pub fn path(
             active[j] = coefs[j] != 0.0;
         }
 
-        const iters = fitInner(columns, r, coefs, col_norms_squared, active, gram, xty, .{
+        var inputs: CdInputs = undefined;
+        if (use_gram) {
+            inputs = .{ .gram = .{ .gram = gram.?, .xty = xty.? } };
+        } else {
+            inputs = .{ .naive = .{ .columns = columns, .r = r } };
+        }
+
+        const iters = fitInner(inputs, coefs, col_norms_squared, active, .{
             .lambda = lambdas[k],
             .alpha = regopts.alpha,
             .penalty_factors = regopts.penalty_factors,
@@ -485,6 +531,67 @@ test "elasticNet box constraints with regularization" {
     try std.testing.expect(coefs[0] >= 0.5 - 1e-10);
     try std.testing.expect(coefs[1] <= 0.3 + 1e-10);
 }
+
+test "elasticNet fit and fitGram give same results" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var coefs = [_]f64{ 0.0, 0.0 };
+
+    var regopts = fixtures.enet_defaults;
+    regopts.alpha = 0.0;
+    regopts.lambda = 0;
+    regopts.max_iter = 100_000;
+    regopts.tol = 1e-14;
+
+    const n_iter = try fit(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs, regopts);
+    _ = n_iter;
+
+    var coefs_gram: [2]f64 = undefined;
+
+    const spec: StatsSpec = .{ .xty = true, .gram = true };
+    const stats = try fixtures.statsFrom(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, spec);
+
+    _ = try fitGram(alloc, &coefs_gram, regopts, stats);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs_gram[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs_gram[1], 1e-6);
+
+    try std.testing.expectApproxEqAbs(coefs[0], coefs_gram[0], 1e-8);
+    try std.testing.expectApproxEqAbs(coefs[1], coefs_gram[1], 1e-8);
+}
+
+test "elasticNet fit and fitGram give same results penalized" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var coefs = [_]f64{ 0.0, 0.0 };
+
+    var regopts = fixtures.enet_defaults;
+    regopts.alpha = 0.5;
+    regopts.lambda = 1e-10;
+    regopts.max_iter = 100_000;
+    regopts.tol = 1e-14;
+
+    const n_iter = try fit(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs, regopts);
+    _ = n_iter;
+
+    var coefs_gram: [2]f64 = undefined;
+
+    const spec: StatsSpec = .{ .xty = true, .gram = true };
+    const stats = try fixtures.statsFrom(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, spec);
+
+    _ = try fitGram(alloc, &coefs_gram, regopts, stats);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs_gram[0], 1e-6);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs_gram[1], 1e-6);
+
+    try std.testing.expectApproxEqAbs(coefs[0], coefs_gram[0], 1e-8);
+    try std.testing.expectApproxEqAbs(coefs[1], coefs_gram[1], 1e-8);
+}
+
 /// Verify coefs satisfy the elastic-net KKT (optimality) conditions.
 /// Objective: (1/2n)||y-Xb||² + λαΣpf|b| + (λ(1-α)/2)Σpf·b²
 fn checkKKT(
@@ -692,7 +799,11 @@ test "elasticNetFitInner gram and naive branches agree from a warm start" {
     var coefs_naive = w;
     var active_naive: [p]bool = undefined;
     for (0..p) |j| active_naive[j] = w[j] != 0.0;
-    _ = fitInner(&cols, &r_naive, &coefs_naive, &col_norms_squared, &active_naive, null, null, opts);
+
+    var inputs: CdInputs = undefined;
+    inputs = .{ .naive = .{ .columns = &cols, .r = &r_naive } };
+
+    _ = fitInner(inputs, &coefs_naive, &col_norms_squared, &active_naive, opts);
 
     // --- gram branch: same start, residual is unused (length only) ---
     var gram: [p * p]f64 = undefined;
@@ -710,7 +821,9 @@ test "elasticNetFitInner gram and naive branches agree from a warm start" {
     var coefs_gram = w;
     var active_gram: [p]bool = undefined;
     for (0..p) |j| active_gram[j] = w[j] != 0.0;
-    _ = fitInner(&cols, &r_gram, &coefs_gram, &col_norms_squared, &active_gram, &gram, &xty_, opts);
+
+    inputs = .{ .gram = .{ .gram = &gram, .xty = &xty_ } };
+    _ = fitInner(inputs, &coefs_gram, &col_norms_squared, &active_gram, opts);
 
     for (0..p) |j| {
         try std.testing.expectApproxEqAbs(coefs_naive[j], coefs_gram[j], 1e-8);

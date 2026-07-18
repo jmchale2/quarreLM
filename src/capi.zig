@@ -7,6 +7,7 @@ const build_options = @import("build_options");
 const fixtures = @import("fixtures.zig");
 
 const OLSMethod = @import("solvers/ols.zig").Method;
+const Solver = @import("regression.zig").Solver;
 
 //============================
 // capi  error management
@@ -95,12 +96,12 @@ export fn quarrel_abi_probe(_: ?*anyopaque, _: ?*anyopaque, _: ?*anyopaque, _: ?
 // objects
 //============================
 /// Convert Solver enum to a c_int
-fn solverToCode(solver: bridge.Solver) c_int {
+fn solverToCode(solver: Solver) c_int {
     return @intFromEnum(solver);
 }
 /// Gather Solver enum from a c_int
-fn solverCodeFromInt(code: c_int) ?bridge.Solver {
-    return std.enums.fromInt(bridge.Solver, code);
+fn solverCodeFromInt(code: c_int) ?Solver {
+    return std.enums.fromInt(Solver, code);
 }
 
 fn olsMethodCodeFromInt(code: u64) ?OLSMethod {
@@ -160,7 +161,7 @@ export fn quarrel_fit(
         .{solver},
     );
 
-    if (solver_enum == bridge.Solver.enet_path) {
+    if (solver_enum == Solver.enet_path) {
         return errorToC(error.WrongAPICall);
     }
 
@@ -216,7 +217,7 @@ export fn quarrel_fit_path(
 
     const solver_enum = solverCodeFromInt(solver) orelse return errorToC(errors.QError.ParameterError);
 
-    if (solver_enum != bridge.Solver.enet_path) {
+    if (solver_enum != Solver.enet_path) {
         return errorToC(errors.QError.WrongAPICall);
     }
 
@@ -297,8 +298,12 @@ test "quarrel_fit matches bridge.fit (capi plumbing)" {
     };
 
     var s1 = fixtures.mock.makeStream();
-    const rc = quarrel_fit(&s1, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &c_out);
-    try std.testing.expect(rc > 0);
+    const rc = quarrel_fit(&s1, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(Solver.enet), &copts, &c_out);
+
+    std.testing.expect(rc > 0) catch |err| {
+        std.debug.print("rc = {d}: {s}\n", .{ rc, quarrel_last_error() });
+        return err;
+    };
 
     // --- reference: same fit through bridge directly ---
     const bopts = bridge.FitOptions{
@@ -321,7 +326,7 @@ test "quarrel_fit matches bridge.fit (capi plumbing)" {
 
     // identical computation, not just similar results
     try std.testing.expectEqual(@as(c_int, @intCast(n_iter)), rc);
-    try std.testing.expectEqual(@as(u64, @intCast(n_iter)), c_out.n_iter); // see note
+    try std.testing.expectEqual(@as(u64, @intCast(n_iter)), c_out.n_iter);
 
     try std.testing.expectApproxEqRel(c_out_coefs[0], out_coefs[0], 1e-8);
     try std.testing.expectApproxEqRel(c_out_coefs[1], out_coefs[1], 1e-8);
@@ -352,7 +357,7 @@ test "quarrel_fit: null pf/lb/ub produce the defaults" {
     var out = CFitResult{ .struct_size = @sizeOf(CFitResult), .n_iter = 0, .out_coeffs = &coefs_explicit };
 
     var s1 = fixtures.mock.makeStream();
-    _ = quarrel_fit(&s1, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
+    _ = quarrel_fit(&s1, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(Solver.enet), &copts, &out);
 
     // explicit values above ARE the documented defaults — nulls must match exactly
     copts.penalty_factors = null;
@@ -361,7 +366,7 @@ test "quarrel_fit: null pf/lb/ub produce the defaults" {
     out.out_coeffs = &coefs_defaulted;
 
     var s2 = fixtures.mock.makeStream();
-    _ = quarrel_fit(&s2, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
+    _ = quarrel_fit(&s2, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(Solver.enet), &copts, &out);
 
     try std.testing.expectEqual(coefs_explicit[0], coefs_defaulted[0]);
     try std.testing.expectEqual(coefs_explicit[1], coefs_defaulted[1]);
@@ -386,7 +391,7 @@ test "quarrel_fit: struct_size mismatch is rejected" {
     var out = CFitResult{ .struct_size = @sizeOf(CFitResult), .n_iter = 0, .out_coeffs = &coefs };
 
     var s = fixtures.mock.makeStream();
-    const rc = quarrel_fit(&s, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.enet), &copts, &out);
+    const rc = quarrel_fit(&s, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(Solver.enet), &copts, &out);
     try std.testing.expectEqual(@intFromEnum(errors.ErrorCode.StructSizeMismatch), rc);
 }
 
@@ -409,6 +414,6 @@ test "quarrel_fit: invalid ols_method is rejected" {
     var out = CFitResult{ .struct_size = @sizeOf(CFitResult), .n_iter = 0, .out_coeffs = &coefs };
 
     var s = fixtures.mock.makeStream();
-    const rc = quarrel_fit(&s, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(bridge.Solver.ols), &copts, &out);
+    const rc = quarrel_fit(&s, &fixtures.mock.y_array, &fixtures.mock.y_schema, 2, @intFromEnum(Solver.ols), &copts, &out);
     try std.testing.expectEqual(@intFromEnum(errors.ErrorCode.ParameterError), rc);
 }

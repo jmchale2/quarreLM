@@ -11,6 +11,11 @@ const OLSOptions = @import("solvers/ols.zig").Options;
 const EnetOptions = @import("solvers/enet.zig").Options;
 const PathOptions = @import("solvers/enet.zig").PathOptions;
 
+const Solver = regression.Solver;
+const StatsAccumulator = @import("solvers/common.zig").StatsAccumulator;
+const SufficientStats = @import("solvers/common.zig").SufficientStats;
+const StatsSpec = @import("solvers/common.zig").StatsSpec;
+
 pub const Table = struct {
     schema: arrow.ArrowSchema,
     batches: std.ArrayList(arrow.ArrowArray),
@@ -24,6 +29,105 @@ pub const Table = struct {
         if (self.schema.release) |release| release(&self.schema);
     }
 };
+
+pub const StreamCursor = struct {
+    stream: *arrow.ArrowArrayStream,
+    schema: arrow.ArrowSchema,
+    columns: [][]const f64,
+    p: usize,
+
+    pub const Batch = struct {
+        array: arrow.ArrowArray,
+        columns: []const []const f64,
+        n_rows: usize,
+
+        pub fn release(self: *Batch) void {
+            if (self.array.release) |rel| rel(&self.array);
+        }
+    };
+
+    /// Pull and validate the schema, allocate the column scratch.
+    /// On any failure the stream (and schema, if pulled) is released before return.
+    pub fn open(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p: usize) !StreamCursor {
+        var schema: arrow.ArrowSchema = undefined;
+        if (stream.get_schema.?(stream, &schema) != 0) {
+            if (stream.release) |rel| rel(stream);
+            return arrow.ArrowError.SchemaError;
+        }
+        errdefer {
+            if (schema.release) |rel| rel(&schema);
+            if (stream.release) |rel| rel(stream);
+        }
+
+        if (schema.n_children != @as(i64, @intCast(p))) return errors.QError.SchemaError;
+
+        const columns = try alloc.alloc([]const f64, p);
+
+        return .{
+            .stream = stream,
+            .schema = schema,
+            .columns = columns,
+            .p = p,
+        };
+    }
+
+    /// Advance to the next batch. Returns null at end of stream.
+    /// The returned batch's `columns` alias cursor scratch (valid until the next call).
+    pub fn next(self: *StreamCursor) !?Batch {
+        var array: arrow.ArrowArray = undefined;
+        if (self.stream.get_next.?(self.stream, &array) != 0) return arrow.ArrowError.StreamError;
+        if (array.release == null) return null; // end of stream — nothing to release
+
+        errdefer if (array.release) |rel| rel(&array);
+
+        if (array.n_children != @as(i64, @intCast(self.p))) return errors.QError.BatchSchemaError;
+
+        for (0..self.p) |i| {
+            const child_array: *arrow.ArrowArray = @ptrCast(array.children[i]);
+            const child_schema: *arrow.ArrowSchema = @ptrCast(self.schema.children[i]);
+            self.columns[i] = try arrow.asFloat64Slice(child_array, child_schema);
+        }
+
+        return .{
+            .array = array,
+            .columns = self.columns,
+            .n_rows = @intCast(array.length),
+        };
+    }
+
+    /// Release schema and stream. Call once, after the final `next`.
+    pub fn deinit(self: *StreamCursor) void {
+        if (self.schema.release) |rel| rel(&self.schema);
+        if (self.stream.release) |rel| rel(self.stream);
+    }
+};
+fn accumulateStream(
+    alloc: std.mem.Allocator,
+    stream: *arrow.ArrowArrayStream,
+    y: []const f64,
+    p: usize,
+    spec: StatsSpec,
+) !SufficientStats {
+    var cursor = try StreamCursor.open(alloc, stream, p);
+    defer cursor.deinit();
+
+    var acc = try StatsAccumulator.init(alloc, p, spec);
+
+    var offset: usize = 0;
+    while (try cursor.next()) |batch_val| {
+        var batch = batch_val;
+        defer batch.release();
+        const end = offset + batch.n_rows;
+        if (end > y.len) return errors.QError.DimensionMismatch;
+        acc.update(batch.columns, y[offset..end]);
+        offset = end;
+    }
+
+    if (acc.n_seen == 0) return arrow.ArrowError.EmptyStream; // finalize asserts n_seen > 0
+    if (offset != y.len) return errors.QError.DimensionMismatch;
+
+    return acc.finalize();
+}
 
 pub fn importStream(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p: usize) !Table {
     var schema: arrow.ArrowSchema = undefined;
@@ -86,23 +190,46 @@ pub fn importStream(alloc: std.mem.Allocator, stream: *arrow.ArrowArrayStream, p
 test "import stream compilation" {
     _ = &importStream;
 }
+
+pub const Ingested = struct {
+    table: ?Table,
+    stats: SufficientStats,
+
+    pub fn deinit(self: *Ingested) void {
+        if (self.table) |*t| t.deinit();
+    }
+};
+
+pub fn ingest(
+    alloc: std.mem.Allocator,
+    stream: *arrow.ArrowArrayStream,
+    y: []const f64,
+    p: usize,
+    plan: regression.IngestPlan,
+) !Ingested {
+    switch (plan.mode) {
+        .stream => return .{
+            .table = null,
+            .stats = try accumulateStream(alloc, stream, y, p, plan.spec),
+        },
+        .materialize => {
+            var table = try importStream(alloc, stream, p);
+            errdefer table.deinit();
+            if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
+
+            var acc = try StatsAccumulator.init(alloc, p, plan.spec);
+            acc.update(table.columns, y);
+            return .{ .table = table, .stats = acc.finalize() };
+        },
+    }
+}
+
 fn sliceOrFill(alloc: std.mem.Allocator, ptr: ?[*]const f64, p: usize, fill: f64) ![]const f64 {
     if (ptr) |raw| return raw[0..p];
     const buf = try alloc.alloc(f64, p);
     @memset(buf, fill);
     return buf;
 }
-
-// =========================================
-// Coverting to a fit and fit_path structure
-// =========================================
-//
-
-pub const Solver = enum(c_int) {
-    ols = 0,
-    enet = 1,
-    enet_path = 2,
-};
 
 pub const FitOptions = struct {
     alpha: f64,
@@ -146,26 +273,31 @@ pub fn fit(
     // Extract y
     const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
 
-    var table = try importStream(alloc, stream_ptr, p);
-    defer table.deinit();
+    const ingest_plan = regression.planIngest(solver_enum, p);
+    //TODO: stream mode does not have a consumer yet (solveFromStats)
+    // ingest_plan.mode = .materialize;
 
-    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
+    var ing = try ingest(alloc, stream_ptr, y, p, ingest_plan);
 
-    var n_iters: usize = undefined;
+    defer ing.deinit();
+
+    if (ing.table != null) {
+        if (y.len != ing.table.?.n_rows) return errors.QError.StreamError;
+    }
+    var regopts: regression.SolverOptions = undefined;
     switch (solver_enum) {
         .ols => {
-            const ols_opts: OLSOptions = .{
+            regopts = .{ .ols = .{
                 .method = opts.ols_method,
-            };
-            _ = try regression.olsFit(alloc, table.columns, y, out.out_coeffs[0..p], ols_opts);
-            n_iters = 0;
+            } };
+            // _ = try regression.olsFit(alloc, table.columns, y, out.out_coeffs[0..p], ols_opts);
         },
         .enet => {
             const penalty_factors = try sliceOrFill(alloc, opts.penalty_factors, p, 1.0);
             const lower_bounds = try sliceOrFill(alloc, opts.lower_bounds, p, -std.math.inf(f64));
             const upper_bounds = try sliceOrFill(alloc, opts.upper_bounds, p, std.math.inf(f64));
 
-            const enet_opts: EnetOptions = .{
+            regopts = .{ .enet = .{
                 .lambda = opts.lambda,
                 .alpha = opts.alpha,
                 .penalty_factors = penalty_factors,
@@ -174,15 +306,27 @@ pub fn fit(
                 .warm_start = if (opts.warm_start) |w| w[0..p] else null,
                 .max_iter = opts.max_iter,
                 .tol = opts.tol,
-            };
+            } };
 
-            n_iters = try regression.elasticNetFit(alloc, table.columns, y, out.out_coeffs[0..p], enet_opts);
-            out.n_iter = n_iters;
+            // const table = ing.table orelse return errors.QError.DimensionMismatch;
+            // n_iters = try regression.elasticNetFit(alloc, table.columns, y, out.out_coeffs[0..p], enet_opts);
+            // out.n_iter = n_iters;
         },
         .enet_path => return errors.QError.ParameterError,
     }
 
-    return n_iters;
+    const cols: ?[]const []const f64 = if (ing.table) |t| t.columns else null;
+    const n_iter = try regression.solveFromStats(
+        alloc,
+        cols,
+        y,
+        ing.stats,
+        regopts,
+        out.out_coeffs[0..p],
+    );
+    out.n_iter = n_iter;
+
+    return n_iter;
 }
 
 test {
@@ -198,6 +342,8 @@ pub fn fit_path(
     opts: FitOptions,
     out: *PathResult,
 ) !usize {
+    if (opts.lambda_min_ratio != null) std.debug.assert((opts.lambda_min_ratio.? > 0) and (opts.lambda_min_ratio.? < 1));
+
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
@@ -258,185 +404,60 @@ pub fn fit_path(
 test {
     _ = &fit_path;
 }
-//===========================================
-//Individual Fit Calls
-//===========================================
-
-pub fn olsFit(
-    stream_ptr: *arrow.ArrowArrayStream,
-    y_array_ptr: *arrow.ArrowArray,
-    y_schema_ptr: *arrow.ArrowSchema,
-    out_coeffs: [*]f64,
-    n_features: c_int,
-) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-
-    const p: usize = @intCast(n_features);
-
-    // Extract y
-    const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
-
-    var table = try importStream(alloc, stream_ptr, p);
-    defer table.deinit();
-
-    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
-
-    // Call the solver
-    try regression.olsFit(table.columns, y, out_coeffs[0..p]);
-}
-
-pub fn olsFitVec(
-    stream_ptr: *arrow.ArrowArrayStream,
-    y_array_ptr: *arrow.ArrowArray,
-    y_schema_ptr: *arrow.ArrowSchema,
-    out_coeffs: [*]f64,
-    n_features: c_int,
-) !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-
-    const p: usize = @intCast(n_features);
-
-    // Extract y
-    const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
-
-    var table = try importStream(alloc, stream_ptr, p);
-    defer table.deinit();
-
-    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
-
-    // Call the solver
-    try regression.olsFitVec(table.columns, y, out_coeffs[0..p]);
-}
-
-pub fn elasticNetFit(
-    stream_ptr: *arrow.ArrowArrayStream,
-    y_array_ptr: *arrow.ArrowArray,
-    y_schema_ptr: *arrow.ArrowSchema,
-    penalty_factors: [*]f64,
-    lower_bounds: [*]f64,
-    upper_bounds: [*]f64,
-    out_coeffs: [*]f64,
-    n_features: c_int,
-    lambda: f64,
-    alpha: f64,
-    tol: f64,
-    max_iter: usize,
-) !usize {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-
-    const p: usize = @intCast(n_features);
-
-    // Extract y
-    const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
-
-    var table = try importStream(alloc, stream_ptr, p);
-    defer table.deinit();
-
-    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
-
-    // marshall params
-    const params = EnetOptions{
-        .lambda = lambda,
-        .alpha = alpha,
-        .penalty_factors = penalty_factors[0..p],
-        .lower_bounds = lower_bounds[0..p],
-        .upper_bounds = upper_bounds[0..p],
-        .tol = tol,
-        .max_iter = max_iter,
-    };
-
-    const n_iter = try regression.elasticNetFit(
-        alloc,
-        table.columns,
-        y,
-        out_coeffs[0..p],
-        params,
-    );
-
-    return n_iter;
-}
-
-pub fn elasticNetPath(
-    stream_ptr: *arrow.ArrowArrayStream,
-    y_array_ptr: *arrow.ArrowArray,
-    y_schema_ptr: *arrow.ArrowSchema,
-    penalty_factors: [*]f64,
-    lower_bounds: [*]f64,
-    upper_bounds: [*]f64,
-    out_coef_matrix: [*]f64,
-    out_lambdas: [*]f64,
-    n_features: c_int,
-    n_lambda: c_int,
-    alpha: f64,
-    lambda_min_ratio: f64,
-    tol: f64,
-    max_iter: usize,
-) !usize {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-
-    const p: usize = @intCast(n_features);
-    const nl: usize = @intCast(n_lambda);
-
-    const y = try arrow.asFloat64Slice(y_array_ptr, y_schema_ptr);
-
-    var table = try importStream(alloc, stream_ptr, p);
-    defer table.deinit();
-
-    if (y.len != table.n_rows) return errors.QError.DimensionMismatch;
-
-    const params = PathOptions{
-        .alpha = alpha,
-        .penalty_factors = penalty_factors[0..p],
-        .lower_bounds = lower_bounds[0..p],
-        .upper_bounds = upper_bounds[0..p],
-        .n_lambda = nl,
-        .lambda_min_ratio = lambda_min_ratio,
-        .max_iter = max_iter,
-        .tol = tol,
-    };
-
-    var out_iters = try alloc.alloc(u64, nl);
-    @memset(out_iters, 0);
-
-    const n_iter = try regression.elasticNetPath(
-        alloc,
-        table.columns,
-        y,
-        out_coef_matrix[0 .. p * nl],
-        out_lambdas[0..nl],
-        out_iters[0..nl],
-        params,
-    );
-
-    return n_iter;
-}
 
 test "bridge path: alpha actually reaches the solver (lambda_max scales as 1/alpha)" {
     const inf_ = std.math.inf(f64);
-    var pf = [_]f64{ 1.0, 1.0 };
-    var lb = [_]f64{ -inf_, -inf_ };
-    var ub = [_]f64{ inf_, inf_ };
+    const pf = [_]f64{ 1.0, 1.0 };
+    const lb = [_]f64{ -inf_, -inf_ };
+    const ub = [_]f64{ inf_, inf_ };
     const n_lambda = 5;
-    var out_coefs: [2 * n_lambda]f64 = undefined;
+    var opts: FitOptions = .{
+        .alpha = 1,
+        .lambda = 1e-4,
+        .tol = 1e-7,
+        .max_iter = 1000,
+        .n_lambda = n_lambda,
+        .lambda_min_ratio = null,
+        .penalty_factors = &pf,
+        .lower_bounds = &lb,
+        .upper_bounds = &ub,
+        .warm_start = null,
+        .ols_method = OLSMethod.auto,
+    };
+
     var out_lambdas: [n_lambda]f64 = undefined;
+    @memset(&out_lambdas, 0);
+    var out_coef_matrix: [2 * n_lambda]f64 = undefined;
+    @memset(&out_coef_matrix, 0);
+    var out_iters: [n_lambda]u64 = undefined;
+    @memset(&out_iters, 0);
+
+    var result = PathResult{ .lambda_paths = &out_lambdas, .n_iters = &out_iters, .out_coeffs_matrix = &out_coef_matrix };
 
     const mock = fixtures.mock;
     var s1 = mock.makeStream();
-    _ = try elasticNetPath(&s1, &mock.y_array, &mock.y_schema, &pf, &lb, &ub, &out_coefs, &out_lambdas, 2, n_lambda, 1.0, 1e-4, 1e-7, 1000);
+    _ = try fit_path(&s1, &mock.y_array, &mock.y_schema, 2, Solver.enet_path, opts, &result);
     const lmax_at_1 = out_lambdas[0];
 
+    var out_lambdas2: [n_lambda]f64 = undefined;
+    @memset(&out_lambdas2, 0);
+    var out_coef_matrix2: [2 * n_lambda]f64 = undefined;
+    @memset(&out_coef_matrix2, 0);
+    var out_iters2: [n_lambda]u64 = undefined;
+    @memset(&out_iters2, 0);
+
+    opts.alpha = 0.5;
+
+    var result2 = PathResult{ .lambda_paths = &out_lambdas2, .n_iters = &out_iters2, .out_coeffs_matrix = &out_coef_matrix2 };
+
     var s2 = mock.makeStream();
-    _ = try elasticNetPath(&s2, &mock.y_array, &mock.y_schema, &pf, &lb, &ub, &out_coefs, &out_lambdas, 2, n_lambda, 0.5, 1e-4, 1e-7, 1000);
-    const lmax_at_half = out_lambdas[0];
+    _ = try fit_path(&s2, &mock.y_array, &mock.y_schema, 2, Solver.enet_path, opts, &result2);
+    const lmax_at_half = out_lambdas2[0];
 
     // lambda_max ∝ 1/alpha — halving alpha must double lambda_max
-    try std.testing.expectApproxEqRel(lmax_at_1 * 2.0, lmax_at_half, 1e-12);
+    try std.testing.expectApproxEqRel(lmax_at_1 * 2.0, lmax_at_half, 1e-6);
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }

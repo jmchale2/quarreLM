@@ -2,12 +2,17 @@
 const regression = @import("regression.zig");
 const arrow = @import("arrow.zig");
 const std = @import("std");
+const common = @import("solvers/common.zig");
 
 const OLSMethods = @import("solvers/ols.zig").Method;
 const OLSOptions = @import("solvers/ols.zig").Options;
 
 const EnetOptions = @import("solvers/enet.zig").Options;
 const PathOptions = @import("solvers/enet.zig").PathOptions;
+
+const StatsSpec = common.StatsSpec;
+const SufficientStats = common.SufficientStats;
+const StatsAccumulator = common.StatsAccumulator;
 
 pub const inf = std.math.inf(f64);
 
@@ -99,6 +104,11 @@ pub fn sinCos(comptime n: usize) type {
             return self;
         }
     };
+}
+pub fn statsFrom(alloc: std.mem.Allocator, cols: []const []const f64, y: []const f64, spec: StatsSpec) !SufficientStats {
+    var acc = try StatsAccumulator.init(alloc, cols.len, spec);
+    acc.update(cols, y);
+    return acc.finalize();
 }
 
 // mock a stream

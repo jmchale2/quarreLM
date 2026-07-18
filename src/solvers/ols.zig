@@ -4,6 +4,7 @@ const errors = @import("../errors.zig");
 const fixtures = @import("../fixtures.zig");
 
 const common = @import("common.zig");
+const SufficientStats = @import("common.zig").SufficientStats;
 
 const dotProduct = common.dotProduct;
 const axpy = common.axpy;
@@ -154,6 +155,58 @@ test "cholesky decomp recovers known coefficients" {
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs[0], 1e-10);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs[1], 1e-10);
+}
+
+pub fn choleskyDecompGram(
+    alloc: std.mem.Allocator,
+    stats: SufficientStats,
+    out_coefs: []f64,
+) !void {
+    const p = out_coefs.len;
+    std.debug.assert(stats.p == p);
+    const gram = stats.gram orelse return errors.QError.ParameterError;
+    const xty = stats.xty orelse return errors.QError.ParameterError;
+
+    const chol = try alloc.alloc(f64, p * p);
+    @memcpy(chol, gram);
+    try common.choleskyFactor(chol, p);
+
+    @memcpy(out_coefs, xty);
+    common.choleskySolve(chol, out_coefs, p);
+}
+
+test "cholesky decomp gram recovers known coefficients" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    // y = 2*x1 + 3*x2, no noise: recover exactly [2, 3]
+    var coefs_gram: [2]f64 = undefined;
+
+    const spec: common.StatsSpec = .{ .xty = true, .gram = true };
+    const stats = try fixtures.statsFrom(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, spec);
+
+    try choleskyDecompGram(alloc, stats, &coefs_gram);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), coefs_gram[0], 1e-10);
+    try std.testing.expectApproxEqAbs(@as(f64, 3.0), coefs_gram[1], 1e-10);
+}
+test "cholesky decomp gram is the same as cholesky decomp" {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    // y = 2*x1 + 3*x2, no noise: recover exactly [2, 3]
+    var coefs: [2]f64 = undefined;
+    var coefs_gram: [2]f64 = undefined;
+
+    try choleskyDecomp(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, &coefs);
+
+    const spec: common.StatsSpec = .{ .xty = true, .gram = true };
+    const stats = try fixtures.statsFrom(alloc, &fixtures.exact_2col.cols, &fixtures.exact_2col.y, spec);
+
+    try choleskyDecompGram(alloc, stats, &coefs_gram);
+
+    try std.testing.expectApproxEqAbs(coefs[0], coefs_gram[0], 1e-10);
+    try std.testing.expectApproxEqAbs(coefs[1], coefs_gram[1], 1e-10);
 }
 
 test {
